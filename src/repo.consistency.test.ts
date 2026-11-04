@@ -122,7 +122,8 @@ describe("repository files", () => {
 
   it("README images all exist", () => {
     const images = [...read("README.md").matchAll(/src="(docs\/images\/[^"]+)"/g)].map((m) => m[1]);
-    expect(images.length).toBeGreaterThan(4);
+    // The README uses the banner only; app screenshots are deliberately not kept in the repository.
+    expect(images).toEqual(["docs/images/banner.png"]);
     for (const img of images) expect(existsSync(join(root, img)), img).toBe(true);
   });
 

@@ -82,7 +82,7 @@ The installer is unsigned, so Windows SmartScreen warns about an unknown publish
 
 - [ ] Run `npm run verify` one last time
 - [ ] Test the installer on a PC that has never had LanLM (engine install, model download, chat)
-- [ ] Test a real cluster across two PCs and a vision model end to end, and update the README if anything differs. The screenshots show a worker on the same PC, and vision has not been verified end to end yet.
+- [ ] Test a real cluster across two PCs and a vision model end to end, and update the README if anything differs. Vision has not been verified end to end yet.
 - [ ] Check each model's license in the catalog
 - [ ] Confirm the name "LanLM" is clear for you: a GitHub and web search found no existing project by that name (November 2026), but also check the domain name (`lanlm.com`, `lanlm.dev`), the npm and crates.io names, and a trademark search (USPTO / EUIPO) before you invest in branding
 - [ ] Replace "LanLM contributors" in `LICENSE`, `Cargo.toml` and `tauri.conf.json` if you prefer your own name as the copyright holder

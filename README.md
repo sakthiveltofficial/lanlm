@@ -25,10 +25,6 @@ Private by design: no account, no cloud, no telemetry.
 
 Its standout feature is the **cluster**: link a second (or third) PC on your network, and LanLM splits a model's layers across them, so you can run a model that does not fit in one machine's RAM. A visual preview shows exactly which layers land on which PC _before_ you load anything.
 
-<p align="center">
-  <img src="docs/images/chat.png" alt="LanLM chat window showing a Python answer with a code block, context meter and model panel" width="860">
-</p>
-
 ## Features
 
 - **Run any GGUF model that llama.cpp supports.** Pick from a built-in catalog (Llama, Gemma, Qwen, Phi, LFM…), paste any `https://…/model.gguf` link, or drop files into the models folder.
@@ -41,16 +37,6 @@ Its standout feature is the **cluster**: link a second (or third) PC on your net
 - **Vision models (experimental).** Download a vision model with its image file in one step, then attach, paste or drop images into the chat.
 - **Private.** No account, no analytics, no telemetry. LanLM only contacts GitHub (to fetch llama.cpp) and Hugging Face (to fetch models) when _you_ ask it to, and your own network when you use a cluster or the API.
 - **Light and native-feeling.** A [Tauri 2](https://tauri.app) app with a Rust backend and a small TypeScript interface with no UI framework, using the system's WebView2 instead of bundling a whole browser.
-
-## Screenshots
-
-|                                                    Cluster: add or lend a PC                                                    |                                              Cluster: layer map and memory                                               |
-| :-----------------------------------------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: |
-| <img src="docs/images/cluster-add.png" alt="Cluster page with Add another PC and Lend this PC cards and a pairing code" width="420"> | <img src="docs/images/cluster.png" alt="Master and worker graph with a per-layer map and memory bars" width="420"> |
-|                                                     **Models and fit badges**                                                   |                                                  **Dark theme**                                                           |
-| <img src="docs/images/models.png" alt="Models page with Fits this PC badges and download buttons" width="420"> | <img src="docs/images/chat-dark.png" alt="LanLM chat in dark theme" width="420"> |
-
-> The cluster screenshots were taken on a single PC with a worker running on the same machine, to demonstrate the interface.
 
 ## Quick start
 
@@ -182,7 +168,7 @@ GitHub Actions runs these on every push and pull request, builds the Windows app
 ```
 src/                  TypeScript interface (no UI framework); pure, tested helpers in src/lib
 src-tauri/src/        Rust backend: engine installer, downloads, llama-server and cluster control
-docs/                 Architecture notes, publishing checklist, screenshots
+docs/                 Architecture notes, publishing checklist, branding assets
 scripts/              verify, version check, set-repo helpers
 .github/              CI, release and CodeQL workflows, issue and PR templates
 ```

@@ -349,10 +349,8 @@ pub struct Preview {
 }
 
 pub fn master_capacity_mb() -> f64 {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
     // The master also runs the app and the KV cache, so it offers less of its own memory.
-    sys.available_memory() as f64 / 1048576.0 * 0.7
+    crate::hw::memory_mb().1 as f64 * 0.7
 }
 
 /// What loading `model` would do with these workers, without loading it.
@@ -419,9 +417,7 @@ fn lan_addresses(port: u16) -> Vec<String> {
 }
 
 fn lendable_ram_mb() -> u64 {
-    let mut sys = sysinfo::System::new();
-    sys.refresh_memory();
-    (sys.available_memory() as f64 / 1048576.0 * 0.8) as u64
+    (crate::hw::memory_mb().1 as f64 * 0.8) as u64
 }
 
 #[tauri::command]

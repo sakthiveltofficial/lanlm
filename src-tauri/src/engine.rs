@@ -59,6 +59,13 @@ fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Extracts a downloaded engine zip into `dir` (the zip crate rejects entries that would escape it).
+fn unpack(zip_path: &Path, dir: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    archive.extract(dir).map_err(|e| e.to_string())
+}
+
 pub fn find_exe_pub(dir: &Path, name: &str) -> Option<PathBuf> {
     find_exe(dir, name)
 }
@@ -148,14 +155,9 @@ pub async fn engine_install(
     status("Unpacking…");
     let zip_for_task = zip_path.clone();
     let dir_for_task = dir.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let file = std::fs::File::open(&zip_for_task).map_err(|e| e.to_string())?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        archive.extract(&dir_for_task).map_err(|e| e.to_string())?;
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    tokio::task::spawn_blocking(move || unpack(&zip_for_task, &dir_for_task))
+        .await
+        .map_err(|e| e.to_string())??;
     let _ = std::fs::remove_file(&zip_path);
 
     if find_exe(&dir, "llama-server.exe").is_none() {

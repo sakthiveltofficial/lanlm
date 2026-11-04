@@ -1,0 +1,68 @@
+{
+  "name": "lanlm",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Run open LLMs (GGUF, llama.cpp) on your own Windows PC, or pool several PCs to run bigger models.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sakthiveltofficial/lanlm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sakthiveltofficial/lanlm/issues"
+  },
+  "homepage": "https://github.com/sakthiveltofficial/lanlm#readme",
+  "keywords": [
+    "llm",
+    "llama-cpp",
+    "gguf",
+    "tauri",
+    "local-ai",
+    "offline",
+    "desktop-app",
+    "windows",
+    "openai-compatible"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write src/lib scripts eslint.config.js vite.config.ts",
+    "format:check": "prettier --check src/lib scripts eslint.config.js vite.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+    "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:versions": "node scripts/check-version.mjs",
+    "verify": "node scripts/verify.mjs",
+    "verify:fast": "node scripts/verify.mjs --fast",
+    "set-repo": "node scripts/set-repo.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^6",
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
+}

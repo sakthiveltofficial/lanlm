@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question or share an idea
+    url: https://github.com/sakthiveltofficial/lanlm/discussions
+    about: For questions and open-ended ideas, please use Discussions.
+  - name: Report a security vulnerability
+    url: https://github.com/sakthiveltofficial/lanlm/security/advisories/new
+    about: Please report security problems privately.

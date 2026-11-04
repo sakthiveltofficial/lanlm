@@ -1,0 +1,115 @@
+name: Release
+
+# Push a tag such as v0.2.0 and this workflow:
+#   1. checks the tag matches the app version and runs the tests,
+#   2. builds the Windows installer (setup .exe) and the portable app (.exe),
+#   3. publishes a GitHub release with both files and a SHA256SUMS.txt checksum list.
+# Run it by hand (Actions -> Release -> Run workflow) to test the build without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Build and publish the Windows release
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+
+      - name: Tag must match the app version
+        if: env.IS_TAG == 'true'
+        run: node scripts/check-version.mjs "${{ github.ref_name }}"
+
+      - name: Run the tests before shipping
+        run: |
+          npm run test
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      # A tag creates (or updates) the release and attaches the installer.
+      - name: Build and create the release
+        if: env.IS_TAG == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: LanLM ${{ github.ref_name }}
+          releaseDraft: false
+          # A tag with a dash, such as v0.2.0-beta.1, is marked as a pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          releaseBody: |
+            See [CHANGELOG.md](https://github.com/sakthiveltofficial/lanlm/blob/main/CHANGELOG.md) for what changed.
+
+            ### Which file do I download?
+            - **`LanLM_<version>_x64-setup.exe`**: the installer (recommended). It adds LanLM to the Start menu and can be uninstalled normally.
+            - **`LanLM_<version>_x64_portable.exe`**: a single program you can run from any folder, with no installation.
+            - **`SHA256SUMS.txt`**: checksums to verify your download (see below).
+
+            ### Notes
+            - Windows 10 or 11 (64-bit) with Microsoft WebView2 (already included in Windows 11).
+            - The files are **not code-signed yet**, so Windows SmartScreen may show "unrecognised app". Choose **More info → Run anyway** if you trust this release, or build from source.
+            - LanLM downloads the llama.cpp engine and your models on first use.
+
+            ### Verify your download
+            ```powershell
+            Get-FileHash .\LanLM_*_x64-setup.exe -Algorithm SHA256
+            ```
+            Compare the result with the matching line in `SHA256SUMS.txt`.
+
+      # A manual run only builds, so you can test the pipeline without publishing.
+      - name: Build (manual run, nothing is published)
+        if: env.IS_TAG != 'true'
+        run: npx tauri build
+
+      - name: Collect the Windows files
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          New-Item -ItemType Directory -Force release-files | Out-Null
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter "*-setup.exe" | Select-Object -First 1
+          if (-not $setup) { throw "The NSIS installer was not built." }
+          Copy-Item $setup.FullName release-files/$($setup.Name)
+          Copy-Item src-tauri/target/release/lanlm.exe "release-files/LanLM_${version}_x64_portable.exe"
+          Push-Location release-files
+          Get-ChildItem -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+          Pop-Location
+
+      - name: Attach the portable app and checksums to the release
+        if: env.IS_TAG == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $files = Get-ChildItem release-files -File | ForEach-Object { $_.FullName }
+          gh release upload "${{ github.ref_name }}" @files --clobber --repo "${{ github.repository }}"
+
+      - name: Keep a copy with the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanlm-windows-${{ github.ref_name }}
+          path: release-files/*
+          retention-days: 30

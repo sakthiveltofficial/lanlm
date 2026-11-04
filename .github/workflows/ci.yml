@@ -1,0 +1,134 @@
+name: CI
+
+# Every push to main and every pull request runs the full set of checks.
+# `npm run verify` runs the same steps locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Frontend (types, lint, format, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Versions match
+        run: npm run check:versions
+      - name: Type-check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Format check
+        run: npm run format:check
+      - name: Unit tests with coverage
+        run: npm run test:coverage
+      - name: Build
+        run: npm run build
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage
+          if-no-files-found: ignore
+
+  rust:
+    name: Rust (format, clippy, tests) on Windows
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # The Tauri build script embeds the built frontend.
+      - run: npm run build
+      - name: Format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  app-build:
+    name: Build the Windows app
+    needs: [frontend, rust]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build (release, no installer)
+        run: npx tauri build --no-bundle
+      - name: Upload the app so reviewers can try it
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanlm-windows-${{ github.sha }}
+          path: src-tauri/target/release/lanlm.exe
+          retention-days: 7
+
+  security:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Advisories appear on their own schedule, so this reports problems without blocking unrelated pull requests.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  # A single required check to protect `main` with: it fails if any job above failed or was skipped.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [frontend, rust, app-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every required job passed
+        run: |
+          echo "frontend:  ${{ needs.frontend.result }}"
+          echo "rust:      ${{ needs.rust.result }}"
+          echo "app-build: ${{ needs.app-build.result }}"
+          if [ "${{ needs.frontend.result }}" != "success" ] || [ "${{ needs.rust.result }}" != "success" ] || [ "${{ needs.app-build.result }}" != "success" ]; then
+            echo "A required job did not succeed."
+            exit 1
+          fi

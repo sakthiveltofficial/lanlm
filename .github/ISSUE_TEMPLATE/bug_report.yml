@@ -1,0 +1,68 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please search existing issues first.
+        **Security problems:** do not report them here, see [SECURITY.md](https://github.com/sakthiveltofficial/lanlm/security/policy).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Models and download Llama 3.2 1B
+        2. Load it
+        3. Send "hello"
+        4. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LanLM version
+      placeholder: "0.1.0 (see the release tag or installer name)"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: CPU and RAM
+      placeholder: "AMD Ryzen 3 7320U, 8 GB"
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Chat, Models and downloads, Engine install, Cluster, API server, Vision, Settings, Installer, Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Engine log
+      description: Open the right panel → Engine log, and paste the last lines. Remove anything private.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here if they help.

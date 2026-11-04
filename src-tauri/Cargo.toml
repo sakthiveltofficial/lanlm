@@ -1,0 +1,36 @@
+[package]
+name = "lanlm"
+version = "0.1.0"
+description = "Run open LLMs (GGUF, llama.cpp) on your own PC, or pool several PCs to run bigger models."
+authors = ["LanLM contributors"]
+license = "MIT"
+repository = "https://github.com/sakthiveltofficial/lanlm"
+homepage = "https://github.com/sakthiveltofficial/lanlm#readme"
+keywords = ["llm", "llama-cpp", "gguf", "tauri", "desktop"]
+categories = ["gui"]
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "lanlm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "fs", "time", "sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+futures-util = "0.3"
+sysinfo = "0.33"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

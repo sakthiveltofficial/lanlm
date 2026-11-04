@@ -25,8 +25,8 @@ jobs:
     env:
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -48,7 +48,7 @@ jobs:
       # A tag creates (or updates) the release and attaches the installer.
       - name: Build and create the release
         if: env.IS_TAG == 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -108,7 +108,7 @@ jobs:
           gh release upload "${{ github.ref_name }}" @files --clobber --repo "${{ github.repository }}"
 
       - name: Keep a copy with the workflow run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lanlm-windows-${{ github.ref_name }}
           path: release-files/*

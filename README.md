@@ -20,6 +20,16 @@ Private by design: no account, no cloud, no telemetry.
 </div>
 
 ---
+## Demo
+
+<div align="center">
+
+[![Watch the LanLM demo video (1 min 47 s)](docs/demo/poster.jpg)](docs/demo/lanlm-demo.mp4)
+
+**[▶ Watch the full demo](docs/demo/lanlm-demo.mp4)** (1 min 47 s): download, engine setup, loading a model, chatting, linking a second PC, the model catalog and settings.
+
+</div>
+
 
 **LanLM** is a desktop app that runs open large language models (LLMs) **offline on your own computer**, using the proven [llama.cpp](https://github.com/ggml-org/llama.cpp) engine. Download a model once, chat with it privately, and expose it to other tools through an OpenAI-compatible local API.
 

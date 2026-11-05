@@ -170,6 +170,29 @@ describe("repository files", () => {
   });
 });
 
+describe("file encoding", () => {
+  it("no text file starts with a byte-order mark", () => {
+    // Windows PowerShell's `Set-Content -Encoding utf8` adds a BOM. Cargo and Node tolerate it,
+    // but other tools (such as the TOML reader inside tauri-action) reject it and break the release build.
+    const skip = new Set(["node_modules", "target", "dist", "coverage", "gen", ".git"]);
+    const binary = /\.(png|jpe?g|ico|icns|gif|webp|lock)$/i;
+    const withBom: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (skip.has(entry.name)) continue;
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (!binary.test(entry.name)) {
+          const head = readFileSync(path).subarray(0, 3);
+          if (head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) withBom.push(path.slice(root.length));
+        }
+      }
+    };
+    walk(root);
+    expect(withBom).toEqual([]);
+  });
+});
+
 describe("secrets and local data", () => {
   it("does not ship a local API key or personal paths in the docs", () => {
     for (const file of ["README.md", "CONTRIBUTING.md", "docs/ARCHITECTURE.md", "docs/PUBLISHING.md"]) {

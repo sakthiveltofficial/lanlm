@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "lanlm"
 version = "0.1.0"
 description = "Run open LLMs (GGUF, llama.cpp) on your own PC, or pool several PCs to run bigger models."

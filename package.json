@@ -1,7 +1,7 @@
 {
   "name": "lanlm",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run open LLMs (GGUF, llama.cpp) on your own Windows PC, or pool several PCs to run bigger models.",
   "license": "MIT",
   "type": "module",

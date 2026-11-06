@@ -1,6 +1,6 @@
 [package]
 name = "lanlm"
-version = "0.1.1"
+version = "0.2.0"
 description = "Run open LLMs (GGUF, llama.cpp) on your own PC, or pool several PCs to run bigger models."
 authors = ["LanLM contributors"]
 license = "MIT"
@@ -10,6 +10,9 @@ keywords = ["llm", "llama-cpp", "gguf", "tauri", "desktop"]
 categories = ["gui"]
 edition = "2021"
 rust-version = "1.80"
+
+[workspace]
+members = [".", "crates/lanlm-mesh"]
 
 [lib]
 name = "lanlm_lib"
@@ -27,6 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 futures-util = "0.3"
 sysinfo = "0.40"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+lanlm-mesh = { path = "crates/lanlm-mesh" }
 
 [profile.release]
 opt-level = "s"

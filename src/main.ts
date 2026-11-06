@@ -4,10 +4,11 @@ import "./style.css";
 import { ic } from "./lib/icons";
 import { esc, gb, md, modelLabel, pct, short } from "./lib/format";
 import { lendableMb, parseWorkerInput } from "./lib/cluster";
+import * as mesh from "./mesh";
 
 // ═════════════════════════════ types ═════════════════════════════
 type Hw = { cpu: string; physicalCores: number; logicalCores: number; totalRamMb: number; availRamMb: number; recThreads: number; recCtx: number };
-type Engine = { installed: boolean; version: string | null; path: string | null };
+type Engine = { installed: boolean; version: string | null; path: string | null; variant?: string | null; hasRpc?: boolean };
 type CatalogItem = { id: string; name: string; file: string; url: string; sizeMb: number; desc: string; vision: boolean; projUrl: string | null; projFile: string | null; projMb: number };
 type Installed = { file: string; sizeMb: number; vision: boolean };
 type Server = { running: boolean; port: number | null; model: string | null; note?: string | null; apiUrl?: string | null; vision?: boolean };
@@ -67,6 +68,7 @@ const S = {
   cluster: { enabled: false, forceShare: false, workers: [], workerPort: 50052, workerLan: true } as Cluster,
   worker: { running: false, port: null, addresses: [], lan: false, pairing: null, ramMb: 0 } as WorkerStatus,
   clusterMsg: "",
+  useCluster: false,
   addMsg: "",
   previewModel: "",
   preview: null as Preview | null,
@@ -137,6 +139,21 @@ async function boot() {
     saveSettings();
   }
   S.catalog = await invoke<CatalogItem[]>("catalog");
+  mesh.hooks.toast = toast;
+  mesh.hooks.render = render;
+  mesh.hooks.catalog = () => S.catalog;
+  mesh.hooks.legacyHtml = legacyClusterHtml;
+  mesh.hooks.useInChat = (on) => { S.useCluster = on; render(); toast(on ? "Chats now go to the whole cluster" : "Chats use the model on this PC"); };
+  mesh.hooks.chatUsesCluster = () => S.useCluster;
+  mesh.hooks.engine = () => ({ installed: S.engine.installed, variant: S.engine.variant ?? null });
+  mesh.hooks.installEngine = (variant) => { void installEngine(variant); };
+  mesh.hooks.engineBusy = () => S.engineBusy;
+  mesh.hooks.isActive = () => S.view === "cluster";
+  await mesh.refreshMesh();
+  mesh.startPolling(() => {
+    // Off the cluster page only the sidebar badge depends on the cluster.
+    if (S.view !== "cluster") render();
+  });
   S.worker = await invoke<WorkerStatus>("worker_status");
   await Promise.all([refreshEngine(), refreshInstalled(), refreshServer()]);
   S.logs = await invoke<string[]>("recent_logs");
@@ -178,6 +195,9 @@ function chatMarkdown(c: Chat): string {
   return `# ${c.title}\n\n` + c.messages.map((m) => `**${m.role === "user" ? "You" : "Assistant"}:**\n\n${m.content}`).join("\n\n---\n\n");
 }
 
+/** Chat goes to the whole cluster when that is chosen and a model is running there. */
+const chatViaCluster = (): boolean => S.useCluster && mesh.clusterReady();
+
 async function generate(chat: Chat) {
   const reply: Msg = { role: "assistant", content: "" };
   chat.messages.push(reply);
@@ -212,7 +232,7 @@ async function generate(chat: Chat) {
     if (active()?.id === chat.id) paintLastMessage();
   };
   try {
-    await invoke("chat_stream", { req: { messages: history, temperature: S.settings.temperature, maxTokens: S.settings.maxTokens }, onEvent: ch });
+    await invoke("chat_stream", { req: { messages: history, temperature: S.settings.temperature, maxTokens: S.settings.maxTokens, cluster: chatViaCluster() }, onEvent: ch });
   } catch (e) {
     reply.content += (reply.content ? "\n\n" : "") + "⚠ " + String(e);
   }
@@ -230,8 +250,8 @@ async function send(text?: string, images?: string[]) {
   const imgs = images ?? [...S.attach];
   const chat = active();
   if ((!msg && !imgs.length) || !chat) return;
-  if (!S.server.running) { toast("Choose a model below the message box first."); return; }
-  if (imgs.length && !S.server.vision) { toast("This model can't read images. Load a vision model (marked “Vision”)."); return; }
+  if (!S.server.running && !chatViaCluster()) { toast(S.useCluster ? "No model is running on the cluster yet. Start one on the Cluster page." : "Choose a model below the message box first."); return; }
+  if (imgs.length && (chatViaCluster() || !S.server.vision)) { toast("This model can't read images. Load a vision model (marked “Vision”)."); return; }
   if (text === undefined) { if (box) { box.value = ""; box.style.height = "auto"; } S.attach = []; }
   if (S.generating) { S.queue.push({ text: msg, images: imgs }); render(); return; }
   chat.messages.push({ role: "user", content: msg, ...(imgs.length ? { images: imgs } : {}) });
@@ -283,7 +303,7 @@ function regenerate() {
 }
 
 // ═════════════════════════════ engine / models ═════════════════════════════
-async function installEngine() {
+async function installEngine(variant = "auto") {
   S.engineBusy = true;
   S.engineMsg = "Starting…";
   render();
@@ -294,7 +314,7 @@ async function installEngine() {
     document.querySelectorAll("[data-engine-msg]").forEach((el) => { el.textContent = S.engineMsg; });
   };
   try {
-    const tag = await invoke<string>("engine_install", { onEvent: ch });
+    const tag = await invoke<string>("engine_install", { variant, onEvent: ch });
     toast(`Engine ${tag} installed`);
     S.engineMsg = "";
   } catch (e) {
@@ -465,7 +485,7 @@ function sidebarHtml(): string {
       <button class="nav-item" data-act="new-chat">${ic("plus")}New chat<span class="kbd">Ctrl+N</span></button>
       <button class="nav-item" data-act="search-toggle">${ic("search")}Search<span class="kbd">Ctrl+K</span></button>
       <button class="nav-item ${S.view === "models" ? "on" : ""}" data-view="models">${ic("box")}Models</button>
-      <button class="nav-item ${S.view === "cluster" ? "on" : ""}" data-view="cluster">${ic("network")}Cluster${S.worker.running || (S.cluster.enabled && S.cluster.workers.length) ? `<span class="kbd">${S.cluster.workers.length || "●"}</span>` : ""}</button>
+      <button class="nav-item ${S.view === "cluster" ? "on" : ""}" data-view="cluster">${ic("network")}Cluster${mesh.deviceCount() > 1 ? `<span class="kbd">${mesh.deviceCount()}</span>` : S.worker.running || (S.cluster.enabled && S.cluster.workers.length) ? `<span class="kbd">${S.cluster.workers.length || "●"}</span>` : ""}</button>
     </nav>
     ${S.searchOpen ? `<div class="sb-search"><input id="search-input" type="text" placeholder="Search chats…" value="${esc(S.query)}"></div>` : ""}
     <div class="sb-list">${groups.map(([t, cs]) => cs.length ? `<div class="sb-sec">${t}</div>${cs.map(row).join("")}` : "").join("") || `<div class="sb-sec">No chats found</div>`}</div>
@@ -505,8 +525,8 @@ const SUGGESTIONS: [string, string][] = [
 function chatBodyHtml(): string {
   const chat = active()!;
   if (!chat.messages.length) {
-    const ready = S.engine.installed && S.server.running;
-    return `<div class="col"><div class="hero"><h1>${ready ? "What can I help with?" : "Welcome to LanLM"}</h1><p>${ready ? `Running <b>${esc(modelLabel(S.server.model ?? ""))}</b> on your own PC. Nothing leaves it.` : "Run open models privately on your own PC, or across several PCs."}</p></div>
+    const ready = chatViaCluster() || (S.engine.installed && S.server.running);
+    return `<div class="col"><div class="hero"><h1>${ready ? "What can I help with?" : "Welcome to LanLM"}</h1><p>${ready ? (chatViaCluster() ? `Running on <b>your cluster</b>. Nothing leaves your network.` : `Running <b>${esc(modelLabel(S.server.model ?? ""))}</b> on your own PC. Nothing leaves it.`) : "Run open models privately on your own PC, or across several PCs."}</p></div>
       ${ready && S.server.vision ? `<p class="hint" style="text-align:center;margin:-4px 0 0">${ic("image")} This model can see images: attach one with <b>+</b>, or paste or drop it into the message box.</p>` : ""}
       ${ready ? `<div class="sugs">${SUGGESTIONS.map(([k, t]) => `<button class="sug" data-act="sug" data-text="${esc(t)}"><small>${k}</small>${esc(t)}</button>`).join("")}</div>` : stepsHtml()}</div><div id="messages" hidden></div>`;
   }
@@ -514,10 +534,11 @@ function chatBodyHtml(): string {
 }
 
 function composerHtml(): string {
-  const run = S.server.running;
+  const viaCluster = chatViaCluster();
+  const run = S.server.running || viaCluster;
   const dot = S.loading ? "busy" : run ? "on" : "";
-  const label = S.loading ? "Loading model…" : run ? modelLabel(S.server.model ?? "") : "Choose a model";
-  const meta = run ? `${S.loaded.ctx / S.loaded.parallel | 0} ctx${S.loaded.parallel > 1 ? ` · ${S.loaded.parallel} slots` : ""}${S.server.note ? " · cluster" : ""}${S.lastTps ? ` · ${S.lastTps.toFixed(1)} tok/s` : ""}` : "";
+  const label = S.loading ? "Loading model…" : viaCluster ? "Whole cluster" : run ? modelLabel(S.server.model ?? "") : "Choose a model";
+  const meta = viaCluster ? `${mesh.deviceCount()} PCs${S.lastTps ? ` · ${S.lastTps.toFixed(1)} tok/s` : ""}` : run ? `${S.loaded.ctx / S.loaded.parallel | 0} ctx${S.loaded.parallel > 1 ? ` · ${S.loaded.parallel} slots` : ""}${S.server.note ? " · cluster" : ""}${S.lastTps ? ` · ${S.lastTps.toFixed(1)} tok/s` : ""}` : "";
   return `<div class="composer"><div class="col">
     ${S.loadError ? `<p class="error">${esc(S.loadError)}</p>` : ""}
     ${S.queue.length ? `<div class="queued">${S.queue.length} message${S.queue.length > 1 ? "s" : ""} queued — will send when this reply finishes</div>` : ""}
@@ -641,7 +662,8 @@ function fitTable(): string {
     <div style="display:flex;gap:18px;align-items:center"><span class="ds" style="width:70px;text-align:center">This PC ${verdict(master, need)}</span><span class="ds" style="width:96px;text-align:center">Cluster ${remote > 0 ? verdict(master + remote, need) : `<span class="badge">no PCs</span>`}</span></div></div>`; }).join("")}</div>`;
 }
 
-function clusterView(): string {
+/** The older manual way to add a PC by address, kept under "More" on the cluster page. */
+function legacyClusterHtml(): string {
   const c = S.cluster, w = S.worker, pv = S.preview, hw = S.hw!;
   const act = c.workers.filter((x) => !x.off);
   const opts = S.installed.map((m) => `<option value="${esc(m.file)}" ${m.file === S.previewModel ? "selected" : ""}>${esc(modelLabel(m.file))} (${gb(m.sizeMb)})</option>`).join("");
@@ -659,8 +681,8 @@ function clusterView(): string {
     <label class="switch" title="${x.off ? "Turned off — not used" : "Use this PC"}"><input type="checkbox" data-wtoggle="${i}" ${x.off ? "" : "checked"}><i></i></label>
     <button class="ibtn" data-act="c-rm" data-i="${i}" title="Remove">${ic("trash")}</button></div>`).join("");
 
-  return `<div class="scroll"><div class="col wide page">
-    <div><h2>Cluster</h2><p class="lead">Combine the memory of several PCs on the same network to run a model that is too big for one. This PC is the <b>master</b> and runs the chat. Other PCs are <b>workers</b> that hold part of the model. A wired network is much faster than Wi-Fi.</p></div>
+  return `<div class="legacy">
+    <p class="hint" style="margin:0 0 14px">The cluster above is the better way. This older method links PCs by address with no password: every PC you add is a plain worker for a model loaded on this PC, and anyone on the network could use a worker. Only use it on a network you trust.</p>
 
     <div class="two">
       <div class="card primary"><div class="ch"><span>${ic("plus")} Add another PC</span></div><div class="cb">
@@ -702,7 +724,11 @@ function clusterView(): string {
       <div class="card"><div class="ch">Memory used on each PC</div><div class="cb">${gaugeHtml(pv)}</div></div></div>` : ""}
 
     <div><h3 style="margin:0 0 4px">What fits</h3><p class="hint" style="margin:0 0 10px">Estimated from free memory right now. Adding PCs raises what the cluster can run.</p>${fitTable()}</div>
-  </div></div>`;
+  </div>`;
+}
+
+function clusterView(): string {
+  return mesh.meshView();
 }
 
 // ───────── right panel ─────────
@@ -787,7 +813,8 @@ function menuHtml(): string {
   if (m.kind === "chat") {
     items = `<button data-act="rename-chat">${ic("pencil")}Rename</button><button data-act="copy-chat">${ic("copy")}Copy chat as Markdown</button><div class="sep"></div><button data-act="del-chat" style="color:var(--bad)">${ic("trash")}Delete chat</button>`;
   } else if (m.kind === "model") {
-    items = `<div class="lab">Models on this PC</div>${S.installed.map((x) => `<button data-act="load-model" data-file="${esc(x.file)}">${S.server.model === x.file ? ic("check") : `<span style="width:16px"></span>`}<span>${esc(modelLabel(x.file))}</span>${x.vision ? `<span class="badge good" style="margin-left:6px">Vision</span>` : ""}<span class="sub">${gb(x.sizeMb)}</span></button>`).join("") || `<div class="lab">None downloaded yet</div>`}
+    const clusterItem = mesh.deviceCount() > 1 ? `<button data-act="chat-cluster">${S.useCluster ? ic("check") : `<span style="width:16px"></span>`}<span>Use the whole cluster</span><span class="sub">${mesh.deviceCount()} PCs</span></button><div class="sep"></div>` : "";
+    items = `${clusterItem}<div class="lab">Models on this PC</div>${S.installed.map((x) => `<button data-act="load-model" data-file="${esc(x.file)}">${S.server.model === x.file ? ic("check") : `<span style="width:16px"></span>`}<span>${esc(modelLabel(x.file))}</span>${x.vision ? `<span class="badge good" style="margin-left:6px">Vision</span>` : ""}<span class="sub">${gb(x.sizeMb)}</span></button>`).join("") || `<div class="lab">None downloaded yet</div>`}
       <div class="sep"></div><button data-view="models">${ic("download")}Download more models…</button>${S.server.running ? `<button data-act="unload">${ic("stop")}Unload model</button>` : ""}`;
   } else {
     items = `<button data-act="attach-image" ${S.server.vision ? "" : "disabled"}>${ic("image")}Attach image${S.server.vision ? "" : `<span class="sub">needs a vision model</span>`}</button><button data-act="open-settings-general">${ic("sliders")}Edit system prompt…</button><button data-view="models">${ic("box")}Browse models…</button><button data-view="cluster">${ic("network")}Cluster…</button>`;
@@ -832,7 +859,7 @@ function openMenu(kind: Menu["kind"], el: HTMLElement) {
 function setView(v: View) {
   S.view = v; S.menu = null; S.renamingId = "";
   render();
-  if (v === "cluster") { void checkWorkers(); schedulePreview(); }
+  if (v === "cluster") { void checkWorkers(); schedulePreview(); void mesh.refreshMesh().then(() => { mesh.schedulePlan(); mesh.paint(true); }); }
 }
 
 document.addEventListener("click", (ev) => {
@@ -847,6 +874,7 @@ document.addEventListener("click", (ev) => {
   if (d.view) { setView(d.view as View); return; }
   if (d.chat) { S.activeId = d.chat; S.view = "chat"; S.menu = null; S.ctxTokens = 0; render(); return; }
   if (d.del) { deleteChat(d.del); return; }
+  if (d.act?.startsWith("mesh-")) { mesh.meshAct(d.act, d); return; }
   const chat = active();
   switch (d.act) {
     case "new-chat": newChat(); break;
@@ -867,6 +895,7 @@ document.addEventListener("click", (ev) => {
     case "copy-chat": if (chat) void navigator.clipboard?.writeText(chatMarkdown(chat)).then(() => toast("Chat copied as Markdown")); break;
     case "del-chat": if (chat) deleteChat(chat.id); S.menu = null; break;
     case "install-engine": void installEngine(); break;
+    case "chat-cluster": S.useCluster = !S.useCluster; S.menu = null; render(); toast(S.useCluster ? "Chats now go to the whole cluster" : "Chats use the model on this PC"); break;
     case "load-model": if (d.file) void loadModel(d.file); break;
     case "unload": void unloadModel(); S.menu = null; break;
     case "dl": { const c = S.catalog.find((x) => x.id === d.id); if (c) void downloadModel(c.id, c.name, c.url, c.file, c.projUrl && c.projFile ? { url: c.projUrl, file: c.projFile } : null); break; }
@@ -956,6 +985,7 @@ document.addEventListener("keydown", (ev) => {
 
 document.addEventListener("input", (ev) => {
   const t = ev.target as HTMLInputElement;
+  if (mesh.meshInput(t, "input")) return;
   const s = S.settings;
   if (t.dataset.wtoggle !== undefined) {
     const w = S.cluster.workers[Number(t.dataset.wtoggle)];
@@ -999,6 +1029,7 @@ document.addEventListener("drop", (ev) => {
 
 document.addEventListener("change", (ev) => {
   const t = ev.target as HTMLSelectElement;
+  if (mesh.meshInput(t, "change")) return;
   if (t.id === "file-input") {
     const input = t as unknown as HTMLInputElement;
     void addImages([...(input.files ?? [])]).then(() => { input.value = ""; });

@@ -4,6 +4,31 @@ All notable changes to LanLM are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+The peer-to-peer cluster release.
+
+### Added
+
+- **Peer-to-peer cluster** (new `lanlm-mesh` crate). PCs find each other on the local network, join only after a person presses Allow (both screens show the same six-digit code), and talk over encrypted, mutually authenticated links (Noise `XXpsk3`). There is no coordinator: every PC publishes a record of itself (hardware, GPUs, engine, speed, model files, running layers, load) and the records are merged between all PCs.
+- **Planner** that decides where a model runs from memory, GPU or CPU, measured speed and network delay: a full copy on every PC that can hold it, and a split across PCs only for what fits nowhere. It leaves out a PC whose network hop costs more than it saves.
+- **Self-healing deployments.** A deployment is kept running: a crashed server is restarted, a vanished PC is replaced, and a PC that joins is used.
+- **Peer-to-peer model store.** Models are copied between PCs in hash-checked 4 MiB pieces, from several PCs at once, resumable, with the internet used only for pieces nobody on the network has.
+- **Shared gateway**: one OpenAI-compatible address for the whole cluster with least-loaded routing, a waiting line, conversation stickiness (prompt-cache reuse), failover and API keys.
+- **GPU engine install**: picks the llama.cpp build for the PC's graphics card (CUDA 12/13, Vulkan, CPU) and checks that it sees the GPU, falling back to the next build if not.
+- **`lanlm-node`**, a headless daemon with a local control API and command line, for Linux and Windows servers.
+- **Cluster screen** in the app: devices, models, run, shared API and activity, plus chat with the whole cluster.
+
+### Changed
+
+- Cluster traffic never uses llama.cpp's unauthenticated RPC port directly: workers listen on this machine only and are reached through the encrypted tunnel.
+- The download code moved into the shared crate; the older "add a PC by address" flow is kept under **Cluster → More**.
+- Rust 1.95 or newer is required (as before for the existing dependencies).
+
+### Fixed
+
+- A download that learns its size from a HEAD request no longer treats an empty body as a 0-byte file.
+
 ## [0.1.1] - 2026-11-05
 
 First published release. Version 0.1.0 was tagged but never published, because its release build failed (see _Fixed_).
@@ -38,6 +63,7 @@ Not published (the release build failed; see 0.1.1).
 - Vision model support (experimental): vision catalog entries, automatic projector pairing, and image attach, paste and drop.
 - Unit tests for the Rust backend and the TypeScript helpers, linting, formatting, and GitHub Actions CI, release and CodeQL workflows.
 
-[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sakthiveltofficial/lanlm/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.0

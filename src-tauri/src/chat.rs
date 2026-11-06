@@ -15,6 +15,10 @@ pub struct ChatReq {
     messages: Vec<Value>,
     temperature: f32,
     max_tokens: i32,
+    /// Send the chat to the cluster's gateway (spread over every device) instead of the model
+    /// loaded on this PC.
+    #[serde(default)]
+    cluster: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -48,13 +52,23 @@ pub async fn chat_stream(
     req: ChatReq,
     on_event: Channel<ChatEvent>,
 ) -> Result<(), String> {
-    let (port, key) = state
-        .server
-        .lock()
-        .await
-        .as_ref()
-        .map(|s| (s.port, s.key.clone()))
-        .ok_or("No model is loaded")?;
+    // Where the request goes: this PC's own model server, or the cluster's gateway.
+    let (addr, key): (String, Option<String>) = if req.cluster {
+        let ctl = state
+            .ctl
+            .get()
+            .ok_or("The cluster service is not running")?;
+        let (a, k) = ctl.chat_endpoint().await?;
+        (a.to_string(), k)
+    } else {
+        state
+            .server
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| (format!("127.0.0.1:{}", s.port), s.key.clone()))
+            .ok_or("No model is loaded")?
+    };
     state.chat_cancel.store(false, Ordering::SeqCst);
 
     let body = json!({
@@ -65,7 +79,7 @@ pub async fn chat_stream(
     });
     let mut req_builder = state
         .http
-        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .post(format!("http://{addr}/v1/chat/completions"))
         .json(&body);
     if let Some(k) = key {
         req_builder = req_builder.bearer_auth(k);

@@ -1,6 +1,6 @@
 [package]
 name = "lanlm-mesh"
-version = "0.1.1"
+version = "0.2.0"
 description = "LanLM mesh: secure device discovery, shared cluster state, scheduling and a load-balancing gateway for llama.cpp."
 authors = ["LanLM contributors"]
 license = "MIT"

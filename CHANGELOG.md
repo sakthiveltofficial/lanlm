@@ -4,6 +4,10 @@ All notable changes to LanLM are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
+The peer-to-peer cluster release.
+
 ### Added
 
 - **Peer-to-peer cluster** (new `lanlm-mesh` crate). PCs find each other on the local network, join only after a person presses Allow (both screens show the same six-digit code), and talk over encrypted, mutually authenticated links (Noise `XXpsk3`). There is no coordinator: every PC publishes a record of itself (hardware, GPUs, engine, speed, model files, running layers, load) and the records are merged between all PCs.
@@ -59,6 +63,7 @@ Not published (the release build failed; see 0.1.1).
 - Vision model support (experimental): vision catalog entries, automatic projector pairing, and image attach, paste and drop.
 - Unit tests for the Rust backend and the TypeScript helpers, linting, formatting, and GitHub Actions CI, release and CodeQL workflows.
 
-[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sakthiveltofficial/lanlm/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.0

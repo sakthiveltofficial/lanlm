@@ -11,6 +11,9 @@ categories = ["gui"]
 edition = "2021"
 rust-version = "1.80"
 
+[workspace]
+members = [".", "crates/lanlm-mesh"]
+
 [lib]
 name = "lanlm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -27,6 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 futures-util = "0.3"
 sysinfo = "0.40"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+lanlm-mesh = { path = "crates/lanlm-mesh" }
 
 [profile.release]
 opt-level = "s"

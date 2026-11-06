@@ -296,3 +296,40 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .9em; }
 
 @media (max-width: 1060px) { .app { --rpw: 0px; } .rpanel { visibility: hidden; border: 0; } }
 @media (max-width: 760px) { .sugs { grid-template-columns: 1fr; } .modal-b { grid-template-columns: 1fr; } .modal-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--border); } }
+
+/* ───────── cluster screen ───────── */
+.mesh .spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--border-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 4px; }
+.mtabs { display: flex; gap: 4px; padding: 4px; background: var(--soft); border-radius: 12px; width: fit-content; max-width: 100%; overflow-x: auto; }
+.mtabs button { border: 0; background: none; color: var(--muted); padding: 7px 16px; border-radius: 9px; font-weight: 500; white-space: nowrap; }
+.mtabs button:hover { color: var(--text); }
+.mtabs button.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.mesh .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); margin-right: 8px; vertical-align: 0; }
+.mesh .dot.good { background: var(--good); } .mesh .dot.warn { background: var(--warn); } .mesh .dot.bad { background: var(--bad); }
+.dev.off { opacity: .62; }
+.mrow { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.mrow .nm { width: 96px; flex: none; color: var(--muted); font-size: .92em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mrow .gcap { color: var(--muted); font-size: .88em; white-space: nowrap; text-align: right; min-width: 70px; }
+.mbar { flex: 1; height: 8px; border-radius: 4px; background: var(--active); overflow: hidden; min-width: 60px; }
+.mbar > i { display: block; height: 100%; border-radius: 4px; transition: width .4s; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mesh .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 3px 9px; border-radius: 8px; font-size: .9em; }
+.mesh .chip .i { width: 13px; height: 13px; color: var(--muted); } .mesh .chip small { color: var(--muted); }
+.activity { margin-top: 8px; padding: 8px 12px; border-radius: 9px; background: var(--soft); color: var(--text); font-size: .93em; }
+.mtable { width: 100%; border-collapse: collapse; }
+.mtable th, .mtable td { padding: 9px 10px; text-align: center; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.mtable th { color: var(--muted); font-weight: 500; font-size: .9em; white-space: nowrap; }
+.mtable td.mname, .mtable th:first-child { text-align: left; }
+.mtable tr:last-child td { border-bottom: 0; }
+.mtable .badge .i { width: 12px; height: 12px; }
+.planrow { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; background: var(--bg); }
+.planrow .layermap { margin-top: 10px; }
+.fld { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: .9em; }
+.fld input, .fld select { color: var(--text); }
+.pair .code, .code { font-size: 2em; font-weight: 700; letter-spacing: .12em; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.codeinline { font-weight: 700; letter-spacing: .08em; font-variant-numeric: tabular-nums; color: var(--text); }
+.codeblock-lite, .logbox-lite { background: var(--soft); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; overflow: auto; white-space: pre-wrap; margin: 10px 0 8px; }
+.logbox-lite { max-height: 260px; color: var(--muted); font-size: 11px; margin: 0; }
+details.card > summary { list-style: none; padding: 14px 18px; font-weight: 600; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card[open] > summary { border-bottom: 1px solid var(--border); }
+.legacy .card { margin-bottom: 14px; }

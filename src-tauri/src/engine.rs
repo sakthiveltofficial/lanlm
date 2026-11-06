@@ -1,10 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
-use crate::{dl, engine_dir, AppState};
+use crate::{engine_dir, AppState};
+use lanlm_mesh::engine as shared;
 
 /// Progress messages streamed to the UI while something installs or downloads.
 #[derive(Clone, Serialize)]
@@ -26,146 +27,67 @@ pub struct EngineStatus {
     installed: bool,
     version: Option<String>,
     path: Option<String>,
+    /// Which build is installed: `cpu`, `vulkan`, `cuda-13.4`, ...
+    variant: Option<String>,
+    /// The build can lend this PC to a cluster (it has the RPC worker).
+    has_rpc: bool,
 }
 
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    assets: Vec<Asset>,
+/// Finds a program anywhere under `dir` by file name, ignoring case (release zips differ in layout).
+pub fn find_exe(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    shared::find_exe(dir, name.trim_end_matches(".exe"))
 }
 
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-}
-
-/// Finds llama-server.exe anywhere under `dir` (release zips differ in layout).
-fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            if let Some(found) = find_exe(&p, name) {
-                return Some(found);
-            }
-        } else if p
-            .file_name()
-            .map(|n| n.eq_ignore_ascii_case(name))
-            .unwrap_or(false)
-        {
-            return Some(p);
-        }
-    }
-    None
-}
-
-/// Extracts a downloaded engine zip into `dir` (the zip crate rejects entries that would escape it).
-fn unpack(zip_path: &Path, dir: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    archive.extract(dir).map_err(|e| e.to_string())
-}
-
-pub fn find_exe_pub(dir: &Path, name: &str) -> Option<PathBuf> {
+pub fn find_exe_pub(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
     find_exe(dir, name)
 }
 
 pub fn server_exe(app: &AppHandle) -> Option<PathBuf> {
-    find_exe(&engine_dir(app), "llama-server.exe")
+    shared::find_exe(&engine_dir(app), "llama-server")
 }
 
 #[tauri::command]
 pub fn engine_status(app: AppHandle) -> EngineStatus {
+    let dir = engine_dir(&app);
     let exe = server_exe(&app);
-    let version = std::fs::read_to_string(engine_dir(&app).join("VERSION"))
-        .ok()
-        .map(|s| s.trim().to_string());
     EngineStatus {
         installed: exe.is_some(),
-        version,
+        version: shared::installed_version(&dir),
+        variant: shared::installed_variant(&dir),
+        has_rpc: shared::find_rpc_server(&dir).is_some(),
         path: exe.map(|p| p.display().to_string()),
     }
 }
 
-/// The plain-CPU 64-bit Windows build. Newer llama.cpp releases call it
-/// `win-cpu-x64`; older ones `win-avx2-x64`.
-fn pick_asset(assets: &[Asset]) -> Option<&Asset> {
-    let candidates: Vec<&Asset> = assets
-        .iter()
-        .filter(|a| {
-            a.name.ends_with(".zip")
-                && a.name.contains("win")
-                && !a.name.contains("cudart")
-                && !a.name.contains("arm64")
-        })
-        .collect();
-    for key in ["win-cpu-x64", "win-avx2-x64"] {
-        if let Some(a) = candidates.iter().find(|a| a.name.contains(key)) {
-            return Some(*a);
-        }
-    }
-    None
-}
-
+/// Installs the llama.cpp build that suits this PC (its GPU, if any), or the one asked for:
+/// `cpu`, `vulkan`, `cuda-13.4`, ... An empty or `auto` value chooses by hardware.
 #[tauri::command]
 pub async fn engine_install(
     app: AppHandle,
     state: State<'_, AppState>,
+    variant: Option<String>,
     on_event: Channel<Progress>,
 ) -> Result<String, String> {
-    let status = |t: &str| {
-        let _ = on_event.send(Progress::Status { text: t.into() });
-    };
-
-    status("Looking up the latest llama.cpp release…");
-    // `releases/latest` can point at a placeholder tag with no binaries, so scan
-    // the most recent releases for the first one that ships a Windows CPU build.
-    let releases: Vec<Release> = state
-        .http
-        .get("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=15")
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("Could not reach GitHub: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("GitHub answered with an error: {e}"))?
-        .json()
-        .await
-        .map_err(|e| format!("Unexpected release data: {e}"))?;
-
-    let (release, asset) = releases
-        .iter()
-        .find_map(|r| pick_asset(&r.assets).map(|a| (r, a)))
-        .ok_or("No recent llama.cpp release has a Windows CPU build (looked for win-cpu-x64 / win-avx2-x64)")?;
-
-    let dir = engine_dir(&app);
-    let zip_path = dir.join("engine-download.zip");
-    status(&format!("Downloading {} …", asset.name));
-    dl::download(
-        &state.http,
-        &asset.browser_download_url,
-        &zip_path,
-        || false,
-        |done, total| {
-            let _ = on_event.send(Progress::Bytes { done, total });
-        },
-    )
-    .await?;
-
-    status("Unpacking…");
-    let zip_for_task = zip_path.clone();
-    let dir_for_task = dir.clone();
-    tokio::task::spawn_blocking(move || unpack(&zip_for_task, &dir_for_task))
-        .await
-        .map_err(|e| e.to_string())??;
-    let _ = std::fs::remove_file(&zip_path);
-
-    if find_exe(&dir, "llama-server.exe").is_none() {
-        return Err("The download did not contain llama-server.exe".into());
+    // The model server and any worker must not be running while their files are replaced.
+    if let Some(ctl) = state.ctl.get() {
+        ctl.node().shutdown().await;
     }
-    let _ = std::fs::write(dir.join("VERSION"), &release.tag_name);
-    let _ = on_event.send(Progress::Done);
-    Ok(release.tag_name.clone())
+    if let Some(mut p) = state.server.lock().await.take() {
+        let _ = p.child.kill().await;
+    }
+    if let Some(mut c) = state.worker.lock().await.take() {
+        let _ = c.kill().await;
+    }
+    let dir = engine_dir(&app);
+    let done = shared::install(&state.http, &dir, variant.as_deref(), |s| {
+        let _ = on_event.send(match s {
+            shared::Step::Status(text) => Progress::Status { text },
+            shared::Step::Bytes { done, total } => Progress::Bytes { done, total },
+            shared::Step::Done => Progress::Done,
+        });
+    })
+    .await?;
+    Ok(format!("{} ({})", done.tag, done.variant))
 }
 
 #[cfg(test)]

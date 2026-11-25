@@ -108,6 +108,10 @@ pub fn run() {
             mesh::mesh_lend,
             mesh::mesh_gateway,
             mesh::mesh_logs,
+            mesh::telegram_status,
+            mesh::telegram_start,
+            mesh::telegram_stop,
+            mesh::telegram_update,
         ])
         .setup(|app| {
             // The cluster service runs for as long as the app does.
@@ -122,6 +126,22 @@ pub fn run() {
             };
             match tauri::async_runtime::block_on(lanlm_mesh::control::Controller::start(cfg)) {
                 Ok(c) => {
+                    // Chats from outside the window (the Telegram bot) use the model loaded on
+                    // this PC when nothing runs on the cluster.
+                    let handle = app.handle().clone();
+                    c.set_local_endpoint(Some(std::sync::Arc::new(move || {
+                        let handle = handle.clone();
+                        Box::pin(async move {
+                            let state = handle.state::<AppState>();
+                            let guard = state.server.lock().await;
+                            guard
+                                .as_ref()
+                                .map(|s| (format!("127.0.0.1:{}", s.port), s.key.clone()))
+                                .ok_or_else(|| {
+                                    "No model is running. Start one in LanLM first.".to_string()
+                                })
+                        })
+                    })));
                     if let Some(state) = app.try_state::<AppState>() {
                         let _ = state.ctl.set(c);
                     }

@@ -4,6 +4,22 @@ All notable changes to LanLM are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **New look**: a light, soft glass window over a peach gradient (and a matching dark theme), a left navigation, a centered welcome with suggestion cards, a rounded composer with Attach, model and Options buttons, and a chat-history panel on the right with search, previews and where each chat ran.
+- **One-click start**: the welcome screen suggests a model that fits this PC and installs the engine, downloads and loads it in one go.
+- **Run on all PCs** from the Models page: one click starts a model across the cluster (files are copied PC to PC).
+- **One model picker** under the message box lists models running on the cluster and on this PC. Chats switch to the cluster on their own when a model is ready there and nothing runs on this PC.
+- **Join requests everywhere**: a PC asking to join shows as a banner on every page (and a badge on Devices), so the two-minute window is not missed. The joining PC shows the code to compare in the same place.
+- **Add a PC** button always visible in the sidebar; on a PC that is not in a cluster yet it creates one first.
+- A PC that joins a cluster installs its engine on its own.
+- **Telegram bot** (new `telegram` module in `lanlm-mesh`): chat with your PCs from your phone. Long polling, an allow-list with approval in the app, `/new` and `/status`, and the same in `lanlm-node` with `--telegram-token` and `--telegram-allow`.
+
+### Changed
+
+- The Cluster page is now **Devices**; its Shared API tab moved to its own **Shared API** page, which also holds this PC's API settings when it is not in a cluster. The Run tab hides mode, context and slot settings under **Advanced options**.
+- Hardware, context and task details moved out of the right panel: the context use shows in the composer, background tasks in a header pill, the engine log under Settings → Model & engine.
+
 ## [0.2.0] - 2026-11-06
 
 The peer-to-peer cluster release.

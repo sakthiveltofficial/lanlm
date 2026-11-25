@@ -97,11 +97,10 @@ LanLM keeps three things apart, so nothing is copied that does not need to be:
 
 1. **Download** from the [Releases page](https://github.com/sakthiveltofficial/lanlm/releases): the installer (`LanLM_<version>_x64-setup.exe`) or the single-file portable `.exe`. Both are built in public by GitHub Actions, and `SHA256SUMS.txt` lets you verify them.
    _Windows SmartScreen may warn about an unrecognised publisher because the files are not code-signed yet._
-2. **Install the engine.** On first launch click **Install engine**. LanLM picks the build for your graphics card automatically.
-3. **Start a cluster** on the first PC: **Cluster → Create**.
-4. **Add the others.** On each, open **Cluster**; the first PC will appear under *nearby*. Press **Ask to join**, then press **Allow** on the first PC after checking that the six digits match.
-5. **Add a model** on the **Models** tab, then press **Start** on the **Run** tab. The preview shows exactly what will happen before it does.
-6. **Chat**, or point your tools at the [shared API](#one-openai-compatible-address-for-the-whole-cluster).
+2. **Press "Download and start".** On first launch the welcome screen suggests one model that fits your PC. One click installs the right engine for your graphics card, downloads the model and loads it.
+3. **Add your other PCs (optional).** Press **Add a PC** at the bottom left. On each other PC open **Devices** and press **Join**, then press **Allow** in the banner on the first PC after checking that the six digits match.
+4. **Run a model on all of them** from the **Models** page with **Run on all PCs**. Chats switch to the cluster when it is ready, and the model picker under the message box always shows where your chat runs.
+5. **Chat**, point your tools at the [shared API](#one-openai-compatible-address-for-the-whole-cluster), or [talk to it from Telegram](#chat-from-your-phone-telegram).
 
 Allow TCP port **50500** (and UDP 5353 for discovery) for your private network in the Windows firewall.
 
@@ -116,7 +115,7 @@ Allow TCP port **50500** (and UDP 5353 for discovery) for your private network i
 
 ## One OpenAI-compatible address for the whole cluster
 
-Turn on **Cluster → Shared API**. Every app, SDK and coding tool that speaks the OpenAI API can use the whole cluster through one address:
+Open **Shared API** in the sidebar and turn it on. Every app, SDK and coding tool that speaks the OpenAI API can use the whole cluster through one address:
 
 ```bash
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -134,6 +133,16 @@ What the gateway does that a plain server does not:
 - **Several models at once.** Different PCs can run different models; the `model` field picks one.
 - **Keys and network control.** Local-only by default. Sharing beyond this PC requires an API key. Streaming (`stream: true`) works.
 - Run it on **any** PC. Several gateways can run at the same time.
+
+## Chat from your phone (Telegram)
+
+Open **Telegram** in the sidebar, paste a bot token from [@BotFather](https://t.me/BotFather) and press **Turn on**. Message your bot: it tells you your user ID and you show up in the app to approve. Only approved users get answers.
+
+- Answers come from the cluster when a model runs there, otherwise from the model loaded on that PC.
+- It uses long polling, so it needs no public address, port forwarding or webhook.
+- Commands: `/new` starts a new conversation, `/status` says whether a model is ready.
+- **Privacy:** messages to the bot pass through Telegram's servers. Everything else in LanLM stays on your network; this does not, so it is off until you turn it on.
+- Headless: `lanlm-node run --telegram-token TOKEN --telegram-allow YOUR_USER_ID`.
 
 ## Run it on servers, no screen
 

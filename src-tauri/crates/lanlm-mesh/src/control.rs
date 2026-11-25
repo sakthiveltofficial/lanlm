@@ -15,7 +15,8 @@ use crate::mesh::{Mesh, MeshConfig, Snapshot};
 use crate::node::{Node, NodeConfig};
 use crate::orchestrator::DeployStatus;
 use crate::planner::PlanResult;
-use crate::proto::{Command, Deployment};
+use crate::proto::{Command, Deployment, InstanceState};
+use crate::telegram::{Bot, Endpoint, TelegramSettings, TelegramStatus};
 
 pub struct ControllerConfig {
     pub data_dir: PathBuf,
@@ -86,6 +87,11 @@ struct Inner {
     gateway: tokio::sync::Mutex<Option<Gateway>>,
     /// A key only this app knows, so its own chat can use a gateway that asks for keys.
     internal_key: String,
+    /// The Telegram bot, when it is turned on.
+    telegram: tokio::sync::Mutex<Option<Bot>>,
+    /// Where a chat goes when no model runs on the cluster: the desktop app sets this to the
+    /// model loaded on this PC.
+    local_endpoint: std::sync::Mutex<Option<Endpoint>>,
 }
 
 impl Controller {
@@ -122,11 +128,18 @@ impl Controller {
                 rand::thread_rng().fill_bytes(&mut b);
                 format!("lanlm-internal-{}", hex::encode(b))
             },
+            telegram: tokio::sync::Mutex::new(None),
+            local_endpoint: std::sync::Mutex::new(None),
         }));
         // The gateway comes back the way it was left.
         let saved: GatewaySettings = c.0.mesh.setting("gateway").unwrap_or_default();
         if saved.enabled {
             let _ = c.gateway_start(saved).await;
+        }
+        // So does the Telegram bot.
+        let tg: TelegramSettings = c.0.mesh.setting("telegram").unwrap_or_default();
+        if tg.enabled && crate::telegram::token_looks_valid(&tg.token) {
+            let _ = c.telegram_start(tg).await;
         }
         Ok(c)
     }
@@ -310,7 +323,119 @@ impl Controller {
         Ok((addr, key))
     }
 
+    // ───────────── chat target and Telegram ─────────────
+
+    /// Is a model ready to answer somewhere in the cluster?
+    pub fn cluster_ready(&self) -> bool {
+        let snap = self.0.mesh.snapshot();
+        snap.joined
+            && snap.nodes.iter().any(|n| {
+                n.alive
+                    && n.record
+                        .instance
+                        .as_ref()
+                        .is_some_and(|i| i.state == InstanceState::Ready)
+            })
+    }
+
+    /// Lets chats that do not come from the screen (the Telegram bot) fall back to a model
+    /// loaded outside the cluster.
+    pub fn set_local_endpoint(&self, e: Option<Endpoint>) {
+        *self.0.local_endpoint.lock().unwrap() = e;
+    }
+
+    /// Where a chat from outside the screen should go: the cluster when a model runs there,
+    /// otherwise the local fallback.
+    pub async fn chat_target(&self) -> Result<(String, Option<String>), String> {
+        if self.cluster_ready() {
+            let (a, k) = self.chat_endpoint().await?;
+            return Ok((a.to_string(), k));
+        }
+        let local = self.0.local_endpoint.lock().unwrap().clone();
+        match local {
+            Some(f) => f().await,
+            None => Err("No model is running. Start one in LanLM first.".to_string()),
+        }
+    }
+
+    pub async fn telegram_start(&self, s: TelegramSettings) -> Result<TelegramStatus, String> {
+        if !crate::telegram::token_looks_valid(&s.token) {
+            return Err("That does not look like a bot token. It looks like 123456789:AAH…, from BotFather.".into());
+        }
+        self.telegram_stop_running().await;
+        let weak = Arc::downgrade(&self.0);
+        let endpoint: Endpoint = Arc::new(move || {
+            let weak = weak.clone();
+            Box::pin(async move {
+                match weak.upgrade() {
+                    Some(inner) => Controller(inner).chat_target().await,
+                    None => Err("LanLM is shutting down".to_string()),
+                }
+            })
+        });
+        let s = TelegramSettings { enabled: true, ..s };
+        let bot = Bot::start(
+            self.0.http.clone(),
+            s.clone(),
+            endpoint,
+            "https://api.telegram.org".into(),
+        );
+        let st = bot.status();
+        *self.0.telegram.lock().await = Some(bot);
+        self.0.mesh.set_setting("telegram", &s);
+        Ok(st)
+    }
+
+    async fn telegram_stop_running(&self) {
+        if let Some(b) = self.0.telegram.lock().await.take() {
+            b.stop().await;
+        }
+    }
+
+    pub async fn telegram_stop(&self) {
+        self.telegram_stop_running().await;
+        let mut s: TelegramSettings = self.0.mesh.setting("telegram").unwrap_or_default();
+        s.enabled = false;
+        self.0.mesh.set_setting("telegram", &s);
+    }
+
+    /// The saved settings and, when it runs, what the bot is doing.
+    pub async fn telegram_status(&self) -> (TelegramSettings, TelegramStatus) {
+        let s: TelegramSettings = self.0.mesh.setting("telegram").unwrap_or_default();
+        let st = self
+            .0
+            .telegram
+            .lock()
+            .await
+            .as_ref()
+            .map(|b| b.status())
+            .unwrap_or_default();
+        (s, st)
+    }
+
+    /// Changes who may use the bot, and the instructions, without a restart.
+    pub async fn telegram_update(&self, allowed: Vec<i64>, system: String) {
+        let mut s: TelegramSettings = self.0.mesh.setting("telegram").unwrap_or_default();
+        s.allowed = allowed.clone();
+        s.system = system.clone();
+        self.0.mesh.set_setting("telegram", &s);
+        let running = self.0.telegram.lock().await.take();
+        if let Some(b) = running {
+            if b.settings().system != system {
+                // The instructions are read when the bot starts.
+                b.stop().await;
+                if s.enabled {
+                    let _ = self.telegram_start(s).await;
+                }
+            } else {
+                b.set_allowed(allowed);
+                *self.0.telegram.lock().await = Some(b);
+            }
+        }
+    }
+
     pub async fn shutdown(&self) {
+        self.telegram_stop_running().await;
         if let Some(g) = self.0.gateway.lock().await.take() {
             g.stop().await;
         }

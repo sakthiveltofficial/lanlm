@@ -17,5 +17,6 @@ pub mod planner;
 pub mod proto;
 pub mod registry;
 pub mod store;
+pub mod telegram;
 
 pub use mesh::{Event, Mesh, MeshConfig, PairStatus, Snapshot};

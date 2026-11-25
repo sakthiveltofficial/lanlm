@@ -6,6 +6,7 @@ use std::time::Duration;
 use lanlm_mesh::control::{Controller, GatewaySettings, Status};
 use lanlm_mesh::planner::PlanResult;
 use lanlm_mesh::proto::{Command, Deployment};
+use lanlm_mesh::telegram::{TelegramSettings, TelegramStatus};
 use serde_json::Value;
 use tauri::State;
 
@@ -191,4 +192,53 @@ pub async fn mesh_gateway(
 #[tauri::command]
 pub fn mesh_logs(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     Ok(ctl(&state)?.node().logs())
+}
+
+// ───────────── Telegram ─────────────
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramView {
+    settings: TelegramSettings,
+    status: TelegramStatus,
+}
+
+#[tauri::command]
+pub async fn telegram_status(state: State<'_, AppState>) -> Result<TelegramView, String> {
+    let (settings, status) = ctl(&state)?.telegram_status().await;
+    Ok(TelegramView { settings, status })
+}
+
+#[tauri::command]
+pub async fn telegram_start(
+    state: State<'_, AppState>,
+    token: String,
+    allowed: Vec<i64>,
+    system: String,
+) -> Result<(), String> {
+    ctl(&state)?
+        .telegram_start(TelegramSettings {
+            enabled: true,
+            token: token.trim().to_string(),
+            allowed,
+            system,
+        })
+        .await
+        .map(|_| ())
+}
+
+#[tauri::command]
+pub async fn telegram_stop(state: State<'_, AppState>) -> Result<(), String> {
+    ctl(&state)?.telegram_stop().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn telegram_update(
+    state: State<'_, AppState>,
+    allowed: Vec<i64>,
+    system: String,
+) -> Result<(), String> {
+    ctl(&state)?.telegram_update(allowed, system).await;
+    Ok(())
 }

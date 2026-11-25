@@ -4,6 +4,10 @@ All notable changes to LanLM are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
+The easier-to-use release: a new look, one flow for models, easier peering and a Telegram bot.
+
 ### Added
 
 - **New look**: a light, soft glass window over a peach gradient (and a matching dark theme), a left navigation, a centered welcome with suggestion cards, a rounded composer with Attach, model and Options buttons, and a chat-history panel on the right with search, previews and where each chat ran.
@@ -17,6 +21,7 @@ All notable changes to LanLM are documented here. The format follows [Keep a Cha
 
 ### Changed
 
+- Planner loop rewritten for a newer clippy lint (no behaviour change).
 - The Cluster page is now **Devices**; its Shared API tab moved to its own **Shared API** page, which also holds this PC's API settings when it is not in a cluster. The Run tab hides mode, context and slot settings under **Advanced options**.
 - Hardware, context and task details moved out of the right panel: the context use shows in the composer, background tasks in a header pill, the engine log under Settings → Model & engine.
 
@@ -79,7 +84,8 @@ Not published (the release build failed; see 0.1.1).
 - Vision model support (experimental): vision catalog entries, automatic projector pairing, and image attach, paste and drop.
 - Unit tests for the Rust backend and the TypeScript helpers, linting, formatting, and GitHub Actions CI, release and CodeQL workflows.
 
-[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sakthiveltofficial/lanlm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sakthiveltofficial/lanlm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sakthiveltofficial/lanlm/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sakthiveltofficial/lanlm/releases/tag/v0.1.0

@@ -34,8 +34,6 @@ RUN OPTIONS
   --gateway PORT        serve the OpenAI API for the whole cluster on this port
   --gateway-key KEY     an API key for the gateway (repeatable)
   --gateway-network     let other computers use the gateway (needs a key)
-  --telegram-token T    answer Telegram messages with the cluster (token from BotFather)
-  --telegram-allow ID   a Telegram user ID allowed to use the bot (repeatable)
   --deploy MODEL.gguf   keep this model running (with --mode, --ctx, --parallel, --url, --max)
 
 COMMANDS (talk to the node started with `run`)
@@ -210,23 +208,6 @@ async fn run(args: &[String]) -> Result<(), String> {
             })
             .await?;
         println!("  OpenAI API for the cluster: {}", st.url);
-    }
-    if let Some(token) = flag(args, "--telegram-token") {
-        let allowed = flags(args, "--telegram-allow")
-            .iter()
-            .map(|v| {
-                v.parse::<i64>()
-                    .map_err(|_| format!("--telegram-allow needs a user ID, not {v}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        ctl.telegram_start(lanlm_mesh::telegram::TelegramSettings {
-            enabled: true,
-            token,
-            allowed,
-            system: String::new(),
-        })
-        .await?;
-        println!("  Telegram bot on (messages pass through Telegram's servers)");
     }
     if let Some(model) = flag(args, "--deploy") {
         let d = Deployment {

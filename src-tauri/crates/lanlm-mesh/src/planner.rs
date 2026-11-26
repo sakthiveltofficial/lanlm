@@ -601,9 +601,10 @@ fn pipeline_over(nodes: &[NodeCaps], idx: &[usize], m: &ModelSpec, want: &Want) 
     });
     let mut ts: Vec<f64> = Vec::new();
     // llama.cpp lists the master's own GPUs first, then the remote devices.
-    for &gpu_mb in &mn.gpus_mb {
+    let n_master_gpus = mn.gpus_mb.len();
+    for g in 0..n_master_gpus {
         let share = if m_gpu > 0 && m_vram > 0.0 {
-            m_gpu as f64 * gpu_mb / m_vram
+            m_gpu as f64 * mn.gpus_mb[g] / m_vram
         } else {
             0.0
         };

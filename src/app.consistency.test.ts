@@ -27,7 +27,7 @@ describe("main.ts consistency", () => {
 
   it("only navigates to views that exist", () => {
     const views = new Set([...source.matchAll(/data-view="([a-z]+)"/g)].map((m) => m[1]));
-    expect([...views].filter((v) => !["chat", "models", "cluster", "api", "integrations"].includes(v))).toEqual([]);
+    expect([...views].filter((v) => !["chat", "models", "cluster"].includes(v))).toEqual([]);
   });
 
   it("never renders model output without escaping it", () => {

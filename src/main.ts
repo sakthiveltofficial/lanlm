@@ -24,19 +24,16 @@ type ChatEvent =
   | { event: "reasoning"; data: { text: string } }
   | { event: "stats"; data: { promptTps: number; genTps: number; tokens: number; contextTokens: number } }
   | { event: "done" };
-type Msg = { role: "user" | "assistant"; content: string; reasoning?: string; stats?: string; images?: string[]; via?: string };
+type Msg = { role: "user" | "assistant"; content: string; reasoning?: string; stats?: string; images?: string[] };
 type Chat = { id: string; title: string; messages: Msg[]; updated: number };
 type Settings = {
   ctx: number; threads: number; parallel: number; temperature: number; maxTokens: number; system: string; lastModel: string;
   apiEnabled: boolean; apiPort: number; apiNetwork: boolean; apiKey: string;
   theme: "system" | "light" | "dark"; scale: number; thinking: "collapsed" | "open" | "hidden";
 };
-type View = "chat" | "models" | "cluster" | "api" | "integrations";
-type Tab = "general" | "engine" | "appearance" | "about";
-type Menu = { kind: "chat" | "model" | "options" | "tasks"; left: number; top?: number; bottom?: number };
-type TgSettings = { enabled: boolean; token: string; allowed: number[]; system: string };
-type TgStatus = { running: boolean; botName: string | null; error: string | null; pending: { id: number; name: string }[]; answered: number };
-type TgView = { settings: TgSettings; status: TgStatus };
+type View = "chat" | "models" | "cluster";
+type Tab = "general" | "engine" | "api" | "appearance" | "about";
+type Menu = { kind: "chat" | "model" | "plus"; left: number; top?: number; bottom?: number };
 
 // ═════════════════════════════ state ═════════════════════════════
 const S = {
@@ -76,15 +73,6 @@ const S = {
   previewModel: "",
   preview: null as Preview | null,
   previewErr: "",
-  /** The person chose this PC's model over the cluster, so do not switch to the cluster on our own. */
-  localChosen: false,
-  /** One-click "download and start" on the welcome screen. */
-  quick: "",
-  tg: null as TgView | null,
-  tgToken: "",
-  tgAllow: "",
-  tgErr: "",
-  tgBusy: false,
   settings: {
     ctx: 4096, threads: 4, parallel: 1, temperature: 0.7, maxTokens: 1024, system: "You are a helpful, concise assistant.", lastModel: "",
     apiEnabled: false, apiPort: 8080, apiNetwork: false, apiKey: "", theme: "system", scale: 1, thinking: "collapsed",
@@ -160,19 +148,12 @@ async function boot() {
   mesh.hooks.engine = () => ({ installed: S.engine.installed, variant: S.engine.variant ?? null });
   mesh.hooks.installEngine = (variant) => { void installEngine(variant); };
   mesh.hooks.engineBusy = () => S.engineBusy;
-  mesh.hooks.isActive = () => S.view === "cluster" || S.view === "api";
-  mesh.hooks.localApiHtml = localApiHtml;
-  mesh.hooks.onJoined = () => {
-    // A PC that joins a cluster should be useful right away: give it an engine.
-    if (!S.engine.installed && !S.engineBusy) { toast("Joined the cluster. Installing the engine for this PC…"); void installEngine("auto"); }
-  };
+  mesh.hooks.isActive = () => S.view === "cluster";
   await mesh.refreshMesh();
   mesh.startPolling(() => {
-    syncChatTarget();
-    // Pages that redraw themselves only need the parts around them refreshed.
-    if (S.view === "cluster" || S.view === "api") paintChrome(); else render();
+    // Off the cluster page only the sidebar badge depends on the cluster.
+    if (S.view !== "cluster") render();
   });
-  window.setInterval(() => { if (S.view === "integrations") void refreshTelegram(); }, 3000);
   S.worker = await invoke<WorkerStatus>("worker_status");
   await Promise.all([refreshEngine(), refreshInstalled(), refreshServer()]);
   S.logs = await invoke<string[]>("recent_logs");
@@ -180,7 +161,6 @@ async function boot() {
   if (!S.chats.length) newChat(false);
   S.activeId = S.activeId || S.chats[0].id;
   S.previewModel = S.server.model ?? S.settings.lastModel ?? "";
-  syncChatTarget();
   await listen<string>("engine-log", (e) => {
     S.logs.push(e.payload);
     if (S.logs.length > 500) S.logs.shift();
@@ -218,48 +198,8 @@ function chatMarkdown(c: Chat): string {
 /** Chat goes to the whole cluster when that is chosen and a model is running there. */
 const chatViaCluster = (): boolean => S.useCluster && mesh.clusterReady();
 
-/** Sends chats to the cluster on its own when a model is ready there and nothing runs here. */
-function syncChatTarget() {
-  if (!S.useCluster && !S.localChosen && !S.server.running && mesh.clusterReady()) {
-    S.useCluster = true;
-    toast("A model is ready on your cluster. Chats now go there.");
-  }
-  if (S.useCluster && !mesh.joined()) S.useCluster = false;
-}
-
-/** The catalog model to suggest to someone new: the biggest one that fits this PC comfortably. */
-function recommended(): CatalogItem | undefined {
-  const total = S.hw?.totalRamMb ?? 0;
-  const fits = S.catalog.filter((c) => !c.vision && (c.sizeMb * 1.2 + 600 <= total * 0.6) && c.sizeMb <= 5500);
-  return fits.sort((a, b) => b.sizeMb - a.sizeMb)[0] ?? [...S.catalog].filter((c) => !c.vision).sort((a, b) => a.sizeMb - b.sizeMb)[0];
-}
-
-/** Engine, model and load in one go, for the first answer in one click. */
-async function quickStart(id: string) {
-  const c = S.catalog.find((x) => x.id === id);
-  if (!c || S.quick) return;
-  try {
-    if (!S.engine.installed) {
-      S.quick = "Installing the engine…"; render();
-      await installEngine("auto");
-      if (!S.engine.installed) throw new Error(S.engineMsg || "The engine could not be installed");
-    }
-    if (!S.installed.some((m) => m.file === c.file)) {
-      S.quick = `Downloading ${c.name}…`; render();
-      await downloadModel(c.id, c.name, c.url, c.file, null);
-      if (!S.installed.some((m) => m.file === c.file)) throw new Error(S.downloads.get(c.id)?.error || "The download did not finish");
-    }
-    S.quick = "Loading the model…"; render();
-    await loadModel(c.file);
-  } catch (e) {
-    toast(String(e instanceof Error ? e.message : e), 6000);
-  }
-  S.quick = "";
-  render();
-}
-
 async function generate(chat: Chat) {
-  const reply: Msg = { role: "assistant", content: "", via: chatViaCluster() ? `Cluster · ${mesh.deviceCount()} PCs` : `This PC · ${modelLabel(S.server.model ?? "")}` };
+  const reply: Msg = { role: "assistant", content: "" };
   chat.messages.push(reply);
   S.generating = true;
   render();
@@ -285,7 +225,7 @@ async function generate(chat: Chat) {
     if (m.event === "delta") reply.content += m.data.text;
     else if (m.event === "reasoning") reply.reasoning = (reply.reasoning ?? "") + m.data.text;
     else if (m.event === "stats") {
-      reply.stats = `${reply.via ? reply.via + " · " : ""}${m.data.genTps.toFixed(1)} tok/s · ${m.data.tokens} tokens`;
+      reply.stats = `${m.data.genTps.toFixed(1)} tok/s · ${m.data.tokens} tokens`;
       S.lastTps = m.data.genTps;
       S.ctxTokens = m.data.contextTokens;
     }
@@ -310,7 +250,7 @@ async function send(text?: string, images?: string[]) {
   const imgs = images ?? [...S.attach];
   const chat = active();
   if ((!msg && !imgs.length) || !chat) return;
-  if (!S.server.running && !chatViaCluster()) { toast(S.useCluster ? "No model is running on the cluster yet. Start one on the Models page." : "Choose a model below the message box first."); return; }
+  if (!S.server.running && !chatViaCluster()) { toast(S.useCluster ? "No model is running on the cluster yet. Start one on the Cluster page." : "Choose a model below the message box first."); return; }
   if (imgs.length && (chatViaCluster() || !S.server.vision)) { toast("This model can't read images. Load a vision model (marked “Vision”)."); return; }
   if (text === undefined) { if (box) { box.value = ""; box.style.height = "auto"; } S.attach = []; }
   if (S.generating) { S.queue.push({ text: msg, images: imgs }); render(); return; }
@@ -405,8 +345,6 @@ async function loadModel(file: string) {
       api: S.settings.apiEnabled ? { port: S.settings.apiPort, network: S.settings.apiNetwork, key: S.settings.apiKey } : null,
     });
     S.loaded = { ctx, parallel };
-    S.useCluster = false;
-    S.localChosen = true;
     S.settings.lastModel = file;
     S.ctxTokens = 0;
     saveSettings();
@@ -420,7 +358,6 @@ async function loadModel(file: string) {
 
 async function unloadModel() {
   await invoke("server_stop");
-  S.localChosen = false;
   await refreshServer();
   S.ctxTokens = 0;
   render();
@@ -513,40 +450,6 @@ function addWorker() {
   render();
 }
 
-async function runOnCluster(file: string, url: string) {
-  try {
-    await mesh.runOnCluster(file, url, S.settings.ctx);
-    S.localChosen = false;
-    toast("Starting on your PCs. Chats switch to the cluster when it is ready.");
-  } catch (e) { toast(String(e), 6000); }
-  render();
-}
-
-// ───────── Telegram ─────────
-async function refreshTelegram() {
-  try {
-    const v = await invoke<TgView>("telegram_status");
-    const changed = JSON.stringify(v) !== JSON.stringify(S.tg);
-    S.tg = v;
-    if (!S.tgAllow && v.settings.allowed.length) S.tgAllow = v.settings.allowed.join(", ");
-    if (changed && S.view === "integrations") paintIntegrations();
-  } catch (e) { S.tgErr = String(e); }
-}
-const parseIds = (txt: string): number[] => [...new Set(txt.split(/[\s,;]+/).map((x) => x.trim()).filter((x) => /^-?\d+$/.test(x)).map(Number))];
-async function tgRun(f: () => Promise<unknown>) {
-  S.tgBusy = true; S.tgErr = ""; paintIntegrations();
-  try { await f(); } catch (e) { S.tgErr = String(e); }
-  S.tgBusy = false;
-  await refreshTelegram();
-  paintIntegrations();
-}
-function paintIntegrations() {
-  const root = document.querySelector<HTMLElement>("#tg-root");
-  const a = document.activeElement as HTMLElement | null;
-  if (!root || (a && root.contains(a) && a.tagName === "INPUT")) return;
-  root.innerHTML = telegramHtml();
-}
-
 // ═════════════════════════════ rendering: pieces ═════════════════════════════
 function msgHtml(m: Msg, idx: number, last: boolean): string {
   if (m.role === "user") return `<div class="msg user"><div class="bubble">${(m.images ?? []).map((u) => `<img src="${u}" alt="Attached image">`).join("")}${esc(m.content)}</div></div>`;
@@ -569,116 +472,63 @@ function paintLastMessage() {
 }
 
 function sidebarHtml(): string {
-  const nav = (view: View, icon: string, label: string, extra = "") =>
-    `<button class="nav-item ${S.view === view ? "on" : ""}" data-view="${view}">${ic(icon)}<span>${label}</span>${extra}</button>`;
-  const reqs = mesh.pairRequestCount();
+  const q = S.query.trim().toLowerCase();
+  const list = S.chats.filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => m.content.toLowerCase().includes(q)));
+  const startOfDay = new Date().setHours(0, 0, 0, 0);
+  const groups: [string, Chat[]][] = [["Today", list.filter((c) => c.updated >= startOfDay)], ["Earlier", list.filter((c) => c.updated < startOfDay)]];
+  const row = (c: Chat) => S.renamingId === c.id
+    ? `<div class="chat-row on"><input id="rename-input" type="text" value="${esc(c.title)}" maxlength="80"></div>`
+    : `<div class="chat-row ${c.id === S.activeId && S.view === "chat" ? "on" : ""}"><button class="t" data-chat="${c.id}" title="${esc(c.title)}">${esc(c.title)}</button><button class="x" data-del="${c.id}" title="Delete">${ic("x")}</button></div>`;
   return `<aside class="sidebar">
-    <div class="brand"><span class="logo">${markSvg("lg")}</span><b>LanLM</b><span class="sp"></span><button class="ibtn" data-act="toggle-side" title="Hide sidebar (Ctrl+B)">${ic("sidebar")}</button></div>
+    <div class="sb-top"><button class="ibtn" data-act="toggle-side" title="Hide sidebar (Ctrl+B)">${ic("sidebar")}</button></div>
     <nav class="sb-nav">
-      ${nav("chat", "home", "Chat", `<span class="kbd">Ctrl+N</span>`)}
-      ${nav("models", "box", "Models")}
-      ${nav("cluster", "network", "Devices", reqs ? `<span class="count">${reqs}</span>` : mesh.deviceCount() > 1 ? `<span class="kbd">${mesh.deviceCount()}</span>` : "")}
-      ${nav("api", "server", "Shared API")}
-      ${nav("integrations", "plane", "Telegram", S.tg?.status.pending.length ? `<span class="count">${S.tg.status.pending.length}</span>` : S.tg?.status.running ? `<span class="dot on"></span>` : "")}
-      <button class="nav-item" data-act="open-settings">${ic("gear")}<span>Settings</span><span class="kbd">Ctrl+,</span></button>
+      <button class="nav-item" data-act="new-chat">${ic("plus")}New chat<span class="kbd">Ctrl+N</span></button>
+      <button class="nav-item" data-act="search-toggle">${ic("search")}Search<span class="kbd">Ctrl+K</span></button>
+      <button class="nav-item ${S.view === "models" ? "on" : ""}" data-view="models">${ic("box")}Models</button>
+      <button class="nav-item ${S.view === "cluster" ? "on" : ""}" data-view="cluster">${ic("network")}Cluster${mesh.deviceCount() > 1 ? `<span class="kbd">${mesh.deviceCount()}</span>` : S.worker.running || (S.cluster.enabled && S.cluster.workers.length) ? `<span class="kbd">${S.cluster.workers.length || "●"}</span>` : ""}</button>
     </nav>
-    <div id="sb-live">${sidebarLiveHtml()}</div>
+    ${S.searchOpen ? `<div class="sb-search"><input id="search-input" type="text" placeholder="Search chats…" value="${esc(S.query)}"></div>` : ""}
+    <div class="sb-list">${groups.map(([t, cs]) => cs.length ? `<div class="sb-sec">${t}</div>${cs.map(row).join("")}` : "").join("") || `<div class="sb-sec">No chats found</div>`}</div>
+    <div class="sb-foot"><div class="avatar">${ic("cpu").replace('class="i"', 'class="i" style="width:15px;height:15px"')}</div>
+      <div class="who"><b>This PC</b><span>${S.hw ? esc(short(S.hw.cpu.replace(/\(R\)|\(TM\)| with .*$/g, ""), 26)) : ""}</span></div>
+      <button class="ibtn" data-act="open-settings" title="Settings (Ctrl+,)">${ic("sliders")}</button></div>
   </aside>`;
-}
-
-/** The parts of the sidebar that follow the cluster: what runs now, and this PC's card. */
-function sidebarLiveHtml(): string {
-  const running: string[] = [];
-  if (S.loading) running.push(`<div class="run-item"><span class="dot busy"></span><span class="n">Loading model…</span></div>`);
-  else if (S.server.running) running.push(`<button class="run-item ${S.useCluster ? "" : "on"}" data-act="use-local" title="Chat with the model on this PC"><span class="dot on"></span><span class="n">${esc(modelLabel(S.server.model ?? ""))}</span><span class="v">this PC</span></button>`);
-  for (const r of mesh.runningModels()) {
-    running.push(`<button class="run-item ${S.useCluster ? "on" : ""}" data-act="use-cluster" title="${esc(r.message)}"><span class="dot ${r.ready ? "on" : "busy"}"></span><span class="n">${esc(modelLabel(r.model))}</span><span class="v">${r.ready ? `${r.ready} cop${r.ready === 1 ? "y" : "ies"}` : "starting"}</span></button>`);
-  }
-  const joined = mesh.joined();
-  const name = esc(short(S.hw?.cpu.replace(/\(R\)|\(TM\)| with .*$/g, "") ?? "", 24));
-  return `<div class="sb-sec">Running now</div>
-    <div class="sb-run">${running.join("") || `<p class="hint" style="margin:2px 12px">Nothing yet. Pick a model on the <b>Models</b> page.</p>`}</div>
-    <div class="sb-card">
-      <div class="who"><span class="avatar">${ic("cpu")}</span><div><b>${joined ? `${mesh.deviceCount()} PC${mesh.deviceCount() === 1 ? "" : "s"} online` : "This PC"}</b><span>${joined ? "in your cluster" : name}</span></div></div>
-      <button class="btn glass block" data-act="add-pc">${ic("plus")}Add a PC</button>
-    </div>`;
-}
-
-/** Banners and the sidebar's live part, redrawn without touching the page being typed in. */
-function paintChrome() {
-  const b = document.querySelector<HTMLElement>("#banners");
-  if (b) b.innerHTML = mesh.bannersHtml();
-  const l = document.querySelector<HTMLElement>("#sb-live");
-  if (l) l.innerHTML = sidebarLiveHtml();
-  const st = document.querySelector<HTMLElement>("#status-pill");
-  if (st) st.outerHTML = statusPillHtml();
-}
-
-/** The glowing four-point mark used as the logo and on the welcome screen. */
-function markSvg(size: "lg" | "xl"): string {
-  const id = "mk" + size;
-  return `<svg class="mark ${size}" viewBox="0 0 120 120" aria-hidden="true"><defs><radialGradient id="${id}" cx="50%" cy="50%" r="55%"><stop offset="0" stop-color="#ffb070"/><stop offset=".45" stop-color="#f19aa8"/><stop offset="1" stop-color="#b9a7e8" stop-opacity=".35"/></radialGradient></defs>
-    <path d="M60 2C63 42 78 57 118 60 78 63 63 78 60 118 57 78 42 63 2 60 42 57 57 42 60 2Z" fill="url(#${id})"/>
-    <path d="M60 22C62 48 72 58 98 60 72 62 62 72 60 98 58 72 48 62 22 60 48 58 58 48 60 22Z" fill="url(#${id})" opacity=".55" transform="rotate(45 60 60)"/></svg>`;
 }
 
 function headerHtml(): string {
   const chat = active();
-  const titles: Record<View, string> = { chat: "", models: "", cluster: "", api: "", integrations: "" };
   const left = S.view === "chat"
     ? `<button class="title" data-menu="chat"><span>${esc(chat?.title ?? "New chat")}</span>${ic("chev")}</button>`
-    : `<span class="title" style="cursor:default"><span>${titles[S.view]}</span></span>`;
-  const tasks = taskCount();
+    : `<span class="title" style="cursor:default"><span>${S.view === "models" ? "Models" : "Cluster"}</span></span>`;
   return `<header class="hdr">${S.side ? "" : `<button class="ibtn" data-act="toggle-side" title="Show sidebar (Ctrl+B)">${ic("sidebar")}</button>`}${left}<span class="sp"></span>
-    ${tasks ? `<button class="pill" data-menu="tasks" title="Background tasks"><span class="spin"></span>${tasks} task${tasks === 1 ? "" : "s"}</button>` : ""}
-    ${statusPillHtml()}
-    <button class="ibtn ${S.right ? "on" : ""}" data-act="toggle-right" title="Chat history (Ctrl+.)">${ic("panel")}</button></header>`;
-}
-
-/** Where chats go right now, at a glance. Opens the Devices page. */
-function statusPillHtml(): string {
-  const via = chatViaCluster();
-  const [dot, text] = S.loading ? ["busy", "Loading model…"]
-    : via ? ["on", `Cluster · ${mesh.deviceCount()} PCs${S.lastTps ? ` · ${S.lastTps.toFixed(0)} tok/s` : ""}`]
-    : S.server.running ? ["on", `This PC${S.lastTps ? ` · ${S.lastTps.toFixed(0)} tok/s` : ""}`]
-    : ["", "No model running"];
-  return `<button class="pill" id="status-pill" data-view="cluster" title="Where your chats run"><span class="dot ${dot}"></span>${esc(text)}</button>`;
-}
-
-function taskCount(): number {
-  return (S.engineBusy ? 1 : 0) + (S.loading ? 1 : 0) + [...S.downloads.values()].filter((d) => !d.error).length;
+    <button class="ibtn ${S.right ? "on" : ""}" data-act="toggle-right" title="Details panel (Ctrl+.)">${ic("panel")}</button></header>`;
 }
 
 function stepsHtml(): string {
-  const rec = recommended();
-  const eng = S.engine.installed, hasModel = S.installed.length > 0;
-  const card = (icon: string, title: string, desc: string, action: string) =>
-    `<div class="sug static"><span class="sic">${ic(icon)}</span><b>${title}</b><span>${desc}</span><div class="sact">${action}</div></div>`;
-  const quick = rec ? card("bolt", S.quick ? "Getting ready…" : `Start with ${esc(rec.name)}`, S.quick ? `<span data-engine-msg>${esc(S.quick)}</span>` : `${gb(rec.sizeMb)}, fits this PC. Installs the engine, downloads and loads it.`,
-    `<button class="btn sm" data-act="quick-start" data-id="${esc(rec.id)}" ${S.quick ? "disabled" : ""}>${S.quick ? "Working…" : "Download and start"}</button>`) : "";
-  const pick = hasModel && eng
-    ? card("box", "Use a model you have", `${S.installed.length} downloaded on this PC.`, `<button class="btn light sm" data-menu="model">Choose model</button>`)
-    : card("box", "Browse models", "Pick from the catalog, or paste any .gguf link.", `<button class="btn light sm" data-view="models">Open models</button>`);
-  const pcs = mesh.joined()
-    ? card("network", "Your cluster", `${mesh.deviceCount()} PCs online. Run a model on all of them from the Models page.`, `<button class="btn light sm" data-view="models">Run on all PCs</button>`)
-    : card("network", "Join your other PCs", "Share memory and speed across every PC at home or in the office.", `<button class="btn light sm" data-view="cluster">Set up devices</button>`);
-  return `<div class="sugs">${quick}${pick}${pcs}</div>`;
+  const eng = S.engine.installed, hasModel = S.installed.length > 0, run = S.server.running;
+  const step = (done: boolean, name: string, sub: string, action: string) =>
+    `<div class="step ${done ? "done" : ""}"><span class="ck">${done ? ic("check").replace('class="i"', 'class="i" style="width:12px;height:12px"') : ""}</span><div style="flex:1"><div class="nm">${name}</div><div class="sub">${sub}</div></div>${done ? "" : action}</div>`;
+  return `<div class="steps">
+    ${step(eng, "Install the engine", S.engineBusy || S.engineMsg ? `<span data-engine-msg>${esc(S.engineMsg)}</span>` : "llama.cpp, from its official GitHub releases (about 60 MB)", `<button class="btn sm" data-act="install-engine" ${S.engineBusy ? "disabled" : ""}>Install</button>`)}
+    ${step(hasModel, "Download a model", "A 1B–3B model is a good first choice for this PC", `<button class="btn sm" data-view="models">Browse models</button>`)}
+    ${step(run, "Load it and start chatting", S.loading ? "Loading…" : "Pick the model under the message box", hasModel && eng ? `<button class="btn sm" data-menu="model">Choose model</button>` : "")}
+  </div>`;
 }
 
-const SUGGESTIONS: [string, string, string, string][] = [
-  ["bolt", "Explain something", "Clear answers with everyday examples", "Explain how a CPU cache works, with an everyday analogy."],
-  ["terminal", "Write code", "Scripts, fixes and reviews", "Write a Python script that renames all files in a folder by date."],
-  ["sparkle", "Brainstorm ideas", "Names, plans and first drafts", "Give me 10 name ideas for a small neighborhood coffee shop."],
+const SUGGESTIONS: [string, string][] = [
+  ["Explain", "Explain how a CPU cache works, with an everyday analogy."],
+  ["Write code", "Write a Python script that renames all files in a folder by date."],
+  ["Brainstorm", "Give me 10 name ideas for a small neighborhood coffee shop."],
+  ["Summarize", "Summarize the key ideas of the Pareto principle in five bullet points."],
 ];
 
 function chatBodyHtml(): string {
   const chat = active()!;
   if (!chat.messages.length) {
     const ready = chatViaCluster() || (S.engine.installed && S.server.running);
-    const where = chatViaCluster() ? `Running on <b>your cluster</b> (${mesh.deviceCount()} PCs). Nothing leaves your network.` : `Running <b>${esc(modelLabel(S.server.model ?? ""))}</b> on this PC. Nothing leaves it.`;
-    return `<div class="col"><div class="hero">${markSvg("xl")}<h1>${ready ? "Welcome back!" : "Welcome to LanLM"}</h1><p>${ready ? "How can I help you today?" : "Private AI on the PCs you already own. Let's get your first model running."}</p>${ready ? `<p class="where">${where}</p>` : ""}</div>
-      ${ready && S.server.vision && !chatViaCluster() ? `<p class="hint" style="text-align:center;margin:-4px 0 0">${ic("image")} This model can see images: use <b>Attach</b>, or paste or drop one into the message box.</p>` : ""}
-      ${ready ? `<div class="sugs">${SUGGESTIONS.map(([i, k, d, t]) => `<button class="sug" data-act="sug" data-text="${esc(t)}"><span class="sic">${ic(i)}</span><b>${k}</b><span>${d}</span></button>`).join("")}</div>` : stepsHtml()}</div><div id="messages" hidden></div>`;
+    return `<div class="col"><div class="hero"><h1>${ready ? "What can I help with?" : "Welcome to LanLM"}</h1><p>${ready ? (chatViaCluster() ? `Running on <b>your cluster</b>. Nothing leaves your network.` : `Running <b>${esc(modelLabel(S.server.model ?? ""))}</b> on your own PC. Nothing leaves it.`) : "Run open models privately on your own PC, or across several PCs."}</p></div>
+      ${ready && S.server.vision ? `<p class="hint" style="text-align:center;margin:-4px 0 0">${ic("image")} This model can see images: attach one with <b>+</b>, or paste or drop it into the message box.</p>` : ""}
+      ${ready ? `<div class="sugs">${SUGGESTIONS.map(([k, t]) => `<button class="sug" data-act="sug" data-text="${esc(t)}"><small>${k}</small>${esc(t)}</button>`).join("")}</div>` : stepsHtml()}</div><div id="messages" hidden></div>`;
   }
   return `<div class="col msgs" id="messages">${chat.messages.map((m, i) => msgHtml(m, i, i === chat.messages.length - 1)).join("")}</div>`;
 }
@@ -688,25 +538,19 @@ function composerHtml(): string {
   const run = S.server.running || viaCluster;
   const dot = S.loading ? "busy" : run ? "on" : "";
   const label = S.loading ? "Loading model…" : viaCluster ? "Whole cluster" : run ? modelLabel(S.server.model ?? "") : "Choose a model";
-  const perSlot = S.loaded.ctx / Math.max(1, S.loaded.parallel);
-  const ctxPct = pct(S.ctxTokens, perSlot);
-  const meta = viaCluster ? `${mesh.deviceCount()} PCs` : run && S.ctxTokens ? `${ctxPct.toFixed(0)}% of memory used` : "";
+  const meta = viaCluster ? `${mesh.deviceCount()} PCs${S.lastTps ? ` · ${S.lastTps.toFixed(1)} tok/s` : ""}` : run ? `${S.loaded.ctx / S.loaded.parallel | 0} ctx${S.loaded.parallel > 1 ? ` · ${S.loaded.parallel} slots` : ""}${S.server.note ? " · cluster" : ""}${S.lastTps ? ` · ${S.lastTps.toFixed(1)} tok/s` : ""}` : "";
   return `<div class="composer"><div class="col">
     ${S.loadError ? `<p class="error">${esc(S.loadError)}</p>` : ""}
     ${S.queue.length ? `<div class="queued">${S.queue.length} message${S.queue.length > 1 ? "s" : ""} queued — will send when this reply finishes</div>` : ""}
     <div class="cbox" id="cbox">
       ${S.attach.length ? `<div class="thumbs">${S.attach.map((u, i) => `<div class="thumb"><img src="${u}" alt="Attached image ${i + 1}"><button data-act="rm-attach" data-i="${i}" title="Remove">${ic("x")}</button></div>`).join("")}</div>` : ""}
       <input type="file" id="file-input" accept="image/*" multiple hidden>
-      <div class="row"><span class="spark">${ic("sparkle")}</span>
-      <textarea id="input" rows="1" placeholder="${S.generating ? "Reply is generating… press Enter to queue your next message" : run ? "Ask anything or send a command to your model…" : "Choose a model below, then ask anything…"}"></textarea></div>
-      <div class="cfoot">
-        <button class="pill" data-act="attach-image" title="${S.server.vision && !viaCluster ? "Attach an image" : "Needs a vision model on this PC"}">${ic("clip")}Attach</button>
-        <button class="pill" data-menu="model" title="Choose where chats run"><span class="dot ${dot}"></span>${esc(short(label, 28))}${S.server.vision && !viaCluster ? ` <span class="badge good">Vision</span>` : ""}${ic("chev")}</button>
-        <button class="pill" data-menu="options">${ic("sliders")}Options</button>
-        <span class="meta">${esc(meta)}</span><span class="sp"></span>
-        ${S.generating ? `<button class="send" data-act="stop" title="Stop">${ic("stop")}</button>` : `<button class="send" data-act="send" title="Send (Enter)">${ic("up")}</button>`}
-      </div>
+      <div class="row">
+      <button class="ibtn" data-menu="plus" title="More">${ic("plus")}</button>
+      <textarea id="input" rows="1" placeholder="${S.generating ? "Reply is generating… press Enter to queue your next message" : S.server.vision ? "Message your model… (paste or drop images here)" : "Message your model…"}"></textarea>
+      ${S.generating ? `<button class="send" data-act="stop" title="Stop">${ic("stop")}</button>` : `<button class="send" data-act="send" title="Send (Enter)">${ic("up")}</button>`}
     </div>
+    <div class="cfoot"><button class="chip" data-menu="model"><span class="dot ${dot}"></span>${esc(label)}${S.server.vision ? ` <span class="badge good">Vision</span>` : ""}${ic("chev")}</button><span>${esc(meta)}</span></div></div>
   </div></div>`;
 }
 
@@ -720,21 +564,19 @@ function modelsView(): string {
   const row = (c: CatalogItem) => {
     const d = S.downloads.get(c.id);
     const inst = have.get(c.file) && (!c.vision || have.get(c.file)!.vision) ? have.get(c.file) : undefined;
-    const onCluster = mesh.runningModels().some((r) => r.model === c.file);
-    const clusterBtn = mesh.joined() && !c.vision ? (onCluster ? `<span class="badge good">On your PCs</span>` : `<button class="btn sm" data-act="cluster-run" data-id="${esc(c.id)}" title="Copy it to the PCs that need it and run it across the cluster">${ic("network")}Run on all PCs</button>`) : "";
-    const action = inst ? `${clusterBtn}<button class="btn light sm" data-act="load-model" data-file="${esc(c.file)}" ${S.loading ? "disabled" : ""}>${S.server.model === c.file ? "In use here" : "Use on this PC"}</button>`
+    const action = inst ? `<button class="btn light sm" data-act="load-model" data-file="${esc(c.file)}" ${S.loading ? "disabled" : ""}>${S.server.model === c.file ? "Loaded" : "Load"}</button>`
       : d && !d.error ? `<button class="btn light sm" data-act="dl-cancel" data-id="${esc(c.id)}">Cancel</button>`
-      : `${clusterBtn}<button class="btn ${clusterBtn ? "light " : ""}sm" data-act="dl" data-id="${esc(c.id)}">${ic("download")}Download here</button>`;
+      : `<button class="btn sm" data-act="dl" data-id="${esc(c.id)}">${ic("download")}Download</button>`;
     const prog = d && !d.error ? `<div class="meter bar"><i data-bar="${esc(c.id)}" style="width:${pct(d.done, d.total)}%"></i></div><div class="ds" data-dl="${esc(c.id)}"></div>` : "";
-    return `<div class="item"><div class="ic">${ic("box")}</div><div class="body"><div class="nm">${esc(c.name)} ${c.vision ? `<span class="badge good">${ic("image").replace('class="i"', 'class="i" style="width:12px;height:12px"')}Vision</span>` : ""} ${fitBadge(c.sizeMb + c.projMb)}</div><div class="ds">${esc(c.desc)} · ${gb(c.sizeMb + c.projMb)}${c.vision ? " (model + image part)" : ""}</div>${prog}${d?.error ? `<div class="error">${esc(d.error)}</div>` : ""}</div><div class="acts2">${action}</div></div>`;
+    return `<div class="item"><div class="ic">${ic("box")}</div><div class="body"><div class="nm">${esc(c.name)} ${c.vision ? `<span class="badge good">${ic("image").replace('class="i"', 'class="i" style="width:12px;height:12px"')}Vision</span>` : ""} ${fitBadge(c.sizeMb + c.projMb)}</div><div class="ds">${esc(c.desc)} · ${gb(c.sizeMb + c.projMb)}${c.vision ? " (model + image part)" : ""}</div>${prog}${d?.error ? `<div class="error">${esc(d.error)}</div>` : ""}</div>${action}</div>`;
   };
   const known = new Set(S.catalog.map((c) => c.file));
   const others = S.installed.filter((m) => !known.has(m.file));
   const otherRow = (m: Installed) => `<div class="item"><div class="ic">${ic("box")}</div><div class="body"><div class="nm">${esc(m.file)}</div><div class="ds">${gb(m.sizeMb)} · added by you</div></div>
-    ${mesh.joined() ? `<button class="btn sm" data-act="cluster-run-file" data-file="${esc(m.file)}">${ic("network")}Run on all PCs</button>` : ""}<button class="btn light sm" data-act="load-model" data-file="${esc(m.file)}">${S.server.model === m.file ? "In use here" : "Use on this PC"}</button><button class="ibtn" data-act="model-delete" data-file="${esc(m.file)}" title="Delete">${ic("trash")}</button></div>`;
+    <button class="btn light sm" data-act="load-model" data-file="${esc(m.file)}">${S.server.model === m.file ? "Loaded" : "Load"}</button><button class="ibtn" data-act="model-delete" data-file="${esc(m.file)}" title="Delete">${ic("trash")}</button></div>`;
   const dls = [...S.downloads.entries()].filter(([id]) => id.startsWith("custom-"));
   return `<div class="scroll"><div class="col wide page">
-    <div><h2>Models</h2><p class="lead">${mesh.joined() ? `Run a model on <b>all your PCs</b> with one click (files are copied PC to PC), or download it to use on this PC only.` : "Download a model once and it runs on this PC, offline. Any GGUF model that llama.cpp supports works: pick one below or add your own link."}</p></div>
+    <div><h2>Models</h2><p class="lead">Download a model once and it runs on this PC, offline. Any GGUF model that llama.cpp supports works: pick one below or add your own link.</p></div>
     <div class="filters"><button class="pillbtn ${S.filter === "all" ? "on" : ""}" data-act="filter" data-f="all">All</button>
       <button class="pillbtn ${S.filter === "fits" ? "on" : ""}" data-act="filter" data-f="fits">Fits this PC</button>
       <button class="pillbtn ${S.filter === "vision" ? "on" : ""}" data-act="filter" data-f="vision">Vision</button>
@@ -891,82 +733,32 @@ function clusterView(): string {
 
 // ───────── right panel ─────────
 function rightHtml(): string {
-  const q = S.query.trim().toLowerCase();
-  const list = S.chats.filter((c) => !q || c.title.toLowerCase().includes(q) || c.messages.some((m) => m.content.toLowerCase().includes(q)));
-  const startOfDay = new Date().setHours(0, 0, 0, 0);
-  const groups: [string, Chat[]][] = [["Today", list.filter((c) => c.updated >= startOfDay)], ["Earlier", list.filter((c) => c.updated < startOfDay)]];
-  const row = (c: Chat) => {
-    if (S.renamingId === c.id) return `<div class="hrow on"><input id="rename-input" type="text" value="${esc(c.title)}" maxlength="80"></div>`;
-    const last = [...c.messages].reverse().find((m) => m.content.trim());
-    const via = [...new Set(c.messages.map((m) => m.via?.split(" · ")[0]).filter(Boolean))] as string[];
-    return `<div class="hrow ${c.id === S.activeId && S.view === "chat" ? "on" : ""}"><button class="t" data-chat="${c.id}" title="${esc(c.title)}">
-      <b>${esc(c.title)}</b><span class="pv">${last ? esc(short(last.content.replace(/[`*#>_]+/g, "").replace(/\s+/g, " ").trim(), 70)) : "No messages yet"}</span>
-      <span class="hm">${via.map((v) => `<i class="tag">${esc(v)}</i>`).join("")}<span class="ago">${c.messages.length ? timeAgo(c.updated) : ""}</span></span></button>
-      <button class="x" data-del="${c.id}" title="Delete">${ic("trash")}</button></div>`;
-  };
+  const hw = S.hw!, run = S.server.running;
+  const perSlot = S.loaded.ctx / Math.max(1, S.loaded.parallel);
+  const ctxPct = pct(S.ctxTokens, perSlot);
+  const tasks: string[] = [];
+  if (S.engineBusy) tasks.push(`<div class="task"><span class="spin"></span><span class="n" data-engine-msg>${esc(S.engineMsg)}</span></div>`);
+  if (S.loading) tasks.push(`<div class="task"><span class="spin"></span><span class="n">Loading model…</span></div>`);
+  for (const [id, d] of S.downloads) if (!d.error) tasks.push(`<div class="task"><span class="spin"></span><span class="n" title="${esc(d.name)}">${esc(short(d.name, 22))}</span><span class="v" style="margin-left:auto;color:var(--muted)" data-dl="${esc(id)}"></span><button class="ibtn" data-act="dl-cancel" data-id="${esc(id)}" style="width:22px;height:22px">${ic("x")}</button></div>`);
+  if (S.worker.running) tasks.push(`<div class="task"><span class="badge good">●</span><span class="n">Worker lending this PC</span><button class="ibtn" data-act="worker-stop" style="margin-left:auto;width:22px;height:22px" title="Stop">${ic("stop")}</button></div>`);
+  if (run && S.server.apiUrl) tasks.push(`<div class="task"><span class="badge good">●</span><span class="n" title="${esc(S.server.apiUrl)}">API ${esc(S.server.apiUrl.replace(/^https?:\/\//, ""))}</span></div>`);
+  const models = S.installed.slice(0, 6).map((m) => `<button class="rrow nav-item" style="padding:5px 8px" data-act="load-model" data-file="${esc(m.file)}">${ic("box")}<span class="n">${esc(modelLabel(m.file))}</span><span class="v">${S.server.model === m.file ? "loaded" : gb(m.sizeMb)}</span></button>`).join("");
+  const workers = S.cluster.workers.map((w, i) => `<div class="rrow"><span class="badge" style="background:${devColor(i + 1)};color:#fff;padding:0 6px">${i + 1}</span><span class="n">${esc(w.endpoint)}</span><span class="v">${w.ok === false ? "offline" : gb(lendableMb(w.ramMb))}</span></div>`).join("");
   return `<aside class="rpanel">
-    <div class="rp-h"><h3>Chat history</h3><button class="ibtn" data-act="toggle-right" title="Hide (Ctrl+.)">${ic("x")}</button></div>
-    <label class="rp-search">${ic("search")}<input id="search-input" type="text" placeholder="Search…" value="${esc(S.query)}"></label>
-    <div class="rp-list">${groups.map(([t, cs]) => cs.length ? `<div class="sb-sec">${t}</div>${cs.map(row).join("")}` : "").join("") || `<p class="hint" style="padding:8px 14px">No chats found.</p>`}</div>
-    <div class="rp-foot"><button class="btn block" data-act="new-chat">${ic("plus")}Create new chat</button></div>
+    <div class="rsec"><h4>This PC</h4>
+      <div class="rrow">${ic("cpu")}<span class="n">${esc(short(hw.cpu.replace(/\(R\)|\(TM\)| with .*$/g, ""), 30))}</span></div>
+      <div class="rrow"><span class="n">Memory</span><span class="v">${gb(hw.availRamMb)} free of ${gb(hw.totalRamMb)}</span></div><div class="meter ${pct(hw.totalRamMb - hw.availRamMb, hw.totalRamMb) > 85 ? "warn" : ""}"><i style="width:${pct(hw.totalRamMb - hw.availRamMb, hw.totalRamMb)}%"></i></div>
+      <div class="rrow"><span class="n">Threads</span><span class="v">${S.settings.threads} of ${hw.logicalCores}</span></div></div>
+    <div class="rsec"><h4>Context ${run ? `<span class="hint">${S.ctxTokens.toLocaleString()} / ${Math.round(perSlot).toLocaleString()}</span>` : ""}</h4>
+      ${run ? `<div class="meter ${ctxPct > 90 ? "bad" : ctxPct > 70 ? "warn" : ""}"><i style="width:${ctxPct}%"></i></div><p class="hint" style="margin:8px 0 0">${ctxPct.toFixed(0)}% of this chat's memory used${S.loaded.parallel > 1 ? ` (${S.loaded.parallel} slots share the context)` : ""}.</p>
+      <div class="rrow" style="margin-top:6px"><span class="n">${esc(modelLabel(S.server.model ?? ""))}</span><button class="btn light sm" style="margin-left:auto" data-act="unload">Unload</button></div>` : `<p class="hint" style="margin:0">No model loaded.</p>`}</div>
+    <div class="rsec"><h4>Cluster <button class="link" data-view="cluster">Open</button></h4>
+      ${workers || `<p class="hint" style="margin:0">Just this PC. Add others to run bigger models.</p>`}
+      ${S.server.note ? `<p class="hint" style="margin:8px 0 0">${esc(S.server.note)}</p>` : ""}</div>
+    <div class="rsec"><h4>Background tasks</h4>${tasks.join("") || `<p class="hint" style="margin:0">Nothing running.</p>`}</div>
+    <div class="rsec"><h4>Models <button class="link" data-view="models">Browse</button></h4>${models || `<p class="hint" style="margin:0">None downloaded yet.</p>`}</div>
+    <div class="rsec"><details id="log-details"><summary style="cursor:pointer;font-weight:600">Engine log</summary><div class="logbox" id="logbox" style="margin-top:10px">${esc(S.logs.join("\n"))}</div></details></div>
   </aside>`;
-}
-
-function timeAgo(ts: number): string {
-  const s = Math.max(0, (Date.now() - ts) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
-  return new Date(ts).toLocaleDateString();
-}
-
-// ───────── Shared API (this PC only, when not in a cluster) and Telegram pages ─────────
-function localApiHtml(): string {
-  const s = S.settings;
-  return `<div class="card"><div class="ch"><span>${ic("server")} This PC's API</span>${S.server.running && S.server.apiUrl ? `<span class="badge good">● live</span>` : `<span class="badge">off</span>`}</div><div class="cb">
-    ${row("Share as an API", "Lets other apps (Open WebUI, coding tools, scripts, the OpenAI SDKs) use the loaded model. Applies the next time a model loads.", sw("s-api-enabled", s.apiEnabled))}
-    ${row("Port", "Where the API listens.", `<input type="number" id="s-api-port" value="${s.apiPort}" min="1024" max="65535">`)}
-    ${row("Allow other devices on my network", "Otherwise only this PC can reach it. A key is required.", sw("s-api-network", s.apiNetwork))}
-    ${row("API key", "Without a key, anything on this PC can use the API.", `<input type="text" id="s-api-key" value="${esc(s.apiKey)}" placeholder="none"><button class="btn light sm" data-act="api-genkey">Create</button><button class="ibtn" data-act="api-copy-key" title="Copy">${ic("copy")}</button>`)}
-    ${S.server.running && S.server.apiUrl ? row("Address now", `Send requests to <b>${esc(S.server.apiUrl)}/chat/completions</b> with the header <code>Authorization: Bearer &lt;key&gt;</code>.`, "") : ""}
-  </div></div>`;
-}
-
-function integrationsView(): string {
-  return `<div class="scroll"><div class="col wide page"><div><h2>Telegram</h2><p class="lead">Chat with the AI on your own PCs from your phone, through a private Telegram bot.</p></div><div id="tg-root">${telegramHtml()}</div></div></div>`;
-}
-
-function telegramHtml(): string {
-  const v = S.tg, st = v?.status, set = v?.settings;
-  const running = !!st?.running;
-  const warn = `<div class="notice">${ic("bolt")}<div><b>Messages to the bot pass through Telegram's servers.</b> Everything else in LanLM stays on your network, but what you send the bot, and its answers, do not. Turn it on only if that is fine for you.</div></div>`;
-  const err = (S.tgErr || st?.error) ? `<p class="error">${esc(S.tgErr || st?.error || "")}</p>` : "";
-  const allowed = set?.allowed ?? [];
-  const pending = (st?.pending ?? []).map((p) => `<div class="item"><span class="avatar">${ic("plane")}</span><div class="body"><div class="nm">${esc(p.name || "Someone")}</div><div class="ds">Telegram user ID ${p.id}</div></div>
-    <button class="btn sm" data-act="tg-approve" data-id="${p.id}">Allow</button></div>`).join("");
-  const allowedRows = allowed.map((id) => `<span class="chip2">${id}<button class="ibtn" data-act="tg-remove" data-id="${id}" title="Remove">${ic("x")}</button></span>`).join("");
-  if (running) {
-    return `<div class="card primary"><div class="ch"><span>${ic("plane")} ${st?.botName ? esc(st.botName) : "Your bot"}</span><span class="badge ${st?.error ? "warn" : "good"}">● ${st?.error ? "reconnecting" : "on"}</span></div><div class="cb">
-      <p class="hint" style="margin:0 0 12px">${st?.botName ? `Open <a href="https://t.me/${esc(st.botName.slice(1))}" target="_blank" rel="noopener">t.me/${esc(st.botName.slice(1))}</a> in Telegram and say hi.` : "Checking the token with Telegram…"} Answers come from the cluster when a model runs there, otherwise from the model loaded on this PC. ${st?.answered ? `<b>${st.answered}</b> answered so far.` : ""}</p>
-      ${err}
-      ${pending ? `<h3 class="sub">Waiting for your approval</h3><div class="list" style="margin-bottom:14px">${pending}</div>` : ""}
-      <h3 class="sub">Who can use it</h3>
-      <div class="chips" style="margin-bottom:10px">${allowedRows || `<span class="hint">Nobody yet. Message the bot: it replies with your user ID and you appear above.</span>`}</div>
-      <div class="row-inline"><button class="btn danger" data-act="tg-stop" ${S.tgBusy ? "disabled" : ""}>Turn off</button></div>
-    </div></div>${warn}`;
-  }
-  return `<div class="card primary"><div class="ch"><span>${ic("plane")} Connect a Telegram bot</span>${v ? `<span class="badge">off</span>` : ""}</div><div class="cb">
-      <ol class="steps2">
-        <li>In Telegram, open <b>@BotFather</b>, send <code>/newbot</code> and follow the steps.</li>
-        <li>Copy the token it gives you (it looks like <code>123456789:AAH…</code>) and paste it here.</li>
-        <li>Press <b>Turn on</b>, then message your bot. Approve yourself when you show up on this page.</li>
-      </ol>
-      <div class="row-inline"><input type="password" id="tg-token" placeholder="Bot token from BotFather" value="${esc(S.tgToken || set?.token || "")}" style="flex:1;min-width:240px" autocomplete="off"></div>
-      <div class="row-inline" style="margin-top:10px"><input type="text" id="tg-allow" placeholder="Optional: Telegram user IDs allowed, separated by commas" value="${esc(S.tgAllow)}" style="flex:1;min-width:240px" autocomplete="off"></div>
-      ${err}
-      <div class="row-inline" style="margin-top:12px;justify-content:flex-end"><button class="btn" data-act="tg-start" ${S.tgBusy ? "disabled" : ""}>${S.tgBusy ? "Connecting…" : "Turn on"}</button></div>
-    </div></div>${warn}`;
 }
 
 // ───────── settings modal / menus ─────────
@@ -977,7 +769,7 @@ const segment = (act: string, cur: string | number, opts: [string | number, stri
 function modalHtml(): string {
   if (!S.modal) return "";
   const s = S.settings, hw = S.hw!;
-  const tabs: [Tab, string, string][] = [["general", "General", "chat"], ["engine", "Model & engine", "cpu"], ["appearance", "Appearance", "image"], ["about", "Shortcuts & about", "bolt"]];
+  const tabs: [Tab, string, string][] = [["general", "General", "chat"], ["engine", "Model & engine", "cpu"], ["api", "API server", "server"], ["appearance", "Appearance", "image"], ["about", "Shortcuts & about", "bolt"]];
   let body: string;
   if (S.modal === "general") {
     body = `<h3>Chat</h3>
@@ -992,15 +784,21 @@ function modalHtml(): string {
       ${row("CPU threads", `This PC has ${hw.physicalCores} cores (${hw.logicalCores} threads). Physical cores usually run fastest.`, `<input type="number" id="s-threads" value="${s.threads}" min="1" max="${hw.logicalCores}">`)}
       ${row("Parallel slots", "Answer several requests at once (they are batched together). The context is shared between slots.", `<input type="number" id="s-parallel" value="${s.parallel}" min="1" max="8">`)}
       ${row("Engine", S.engine.installed ? `llama.cpp ${esc(S.engine.version ?? "")}` : "Not installed yet.", `<button class="btn light" data-act="install-engine" ${S.engineBusy ? "disabled" : ""}>${S.engine.installed ? "Update" : "Install"}</button>`)}
-      <div class="hint" data-engine-msg>${esc(S.engineMsg)}</div>
-      <details id="log-details" style="margin-top:14px"><summary style="cursor:pointer;font-weight:600">Engine log</summary><div class="logbox" id="logbox" style="margin-top:10px">${esc(S.logs.join("\n"))}</div></details>`;
+      <div class="hint" data-engine-msg>${esc(S.engineMsg)}</div>`;
+  } else if (S.modal === "api") {
+    body = `<h3>API server</h3>
+      ${row("Share as an API", "Lets other apps (Open WebUI, coding tools, scripts, the OpenAI SDKs) use the loaded model. Applies on the next load.", sw("s-api-enabled", s.apiEnabled))}
+      ${row("Port", "Where the API listens.", `<input type="number" id="s-api-port" value="${s.apiPort}" min="1024" max="65535">`)}
+      ${row("Allow other devices on my network", "Otherwise only this PC can reach it. A key is required.", sw("s-api-network", s.apiNetwork))}
+      ${row("API key", "Without a key, anything on this PC can use the API.", `<input type="text" id="s-api-key" value="${esc(s.apiKey)}" placeholder="none"><button class="btn light sm" data-act="api-genkey">Create</button><button class="ibtn" data-act="api-copy-key" title="Copy">${ic("copy")}</button>`)}
+      ${S.server.running && S.server.apiUrl ? row("Address now", `Send requests to <b>${esc(S.server.apiUrl)}/chat/completions</b> with the header <code>Authorization: Bearer &lt;key&gt;</code>.`, `<span class="badge good">● live</span>`) : ""}`;
   } else if (S.modal === "appearance") {
     body = `<h3>Appearance</h3>
       ${row("Theme", "Match your system, or choose.", segment("set-theme", s.theme, [["system", "System"], ["light", "Light"], ["dark", "Dark"]]))}
       ${row("Text size", "Scales the whole app.", segment("set-scale", s.scale, [[0.93, "Small"], [1, "Default"], [1.1, "Large"]]))}`;
   } else {
     const k = (a: string, b: string) => `<div class="srow"><div class="l"><b>${a}</b></div><div class="r"><span class="kbd2">${b}</span></div></div>`;
-    body = `<h3>Shortcuts</h3>${k("New chat", "Ctrl + N")}${k("Search chats", "Ctrl + K")}${k("Toggle sidebar", "Ctrl + B")}${k("Toggle chat history", "Ctrl + .")}${k("Settings", "Ctrl + ,")}${k("Send / queue a message", "Enter")}${k("New line", "Shift + Enter")}
+    body = `<h3>Shortcuts</h3>${k("New chat", "Ctrl + N")}${k("Search chats", "Ctrl + K")}${k("Toggle sidebar", "Ctrl + B")}${k("Toggle details panel", "Ctrl + .")}${k("Settings", "Ctrl + ,")}${k("Send / queue a message", "Enter")}${k("New line", "Shift + Enter")}
       <h3 style="margin-top:22px">About</h3><p class="hint">LanLM runs open models on your own PC with llama.cpp. Chats and settings stay on this computer. Engine: ${S.engine.installed ? `llama.cpp ${esc(S.engine.version ?? "")}` : "not installed"}.</p>`;
   }
   return `<div class="modal-back" data-act="close-modal"><div class="modal" role="dialog" aria-label="Settings"><div class="modal-h"><span>Settings</span><button class="ibtn" data-act="close-modal">${ic("x")}</button></div>
@@ -1010,33 +808,16 @@ function modalHtml(): string {
 function menuHtml(): string {
   const m = S.menu;
   if (!m) return "";
-  const pos = `left:${Math.max(8, Math.min(m.left, innerWidth - 300))}px;${m.top !== undefined ? `top:${m.top}px` : `bottom:${m.bottom}px`}`;
-  const tick = (on: boolean) => (on ? ic("check") : `<span style="width:16px"></span>`);
+  const pos = `left:${Math.max(8, Math.min(m.left, innerWidth - 250))}px;${m.top !== undefined ? `top:${m.top}px` : `bottom:${m.bottom}px`}`;
   let items: string;
   if (m.kind === "chat") {
     items = `<button data-act="rename-chat">${ic("pencil")}Rename</button><button data-act="copy-chat">${ic("copy")}Copy chat as Markdown</button><div class="sep"></div><button data-act="del-chat" style="color:var(--bad)">${ic("trash")}Delete chat</button>`;
   } else if (m.kind === "model") {
-    let cluster = "";
-    if (mesh.joined()) {
-      const runs = mesh.runningModels();
-      cluster = `<div class="lab">On your cluster · ${mesh.deviceCount()} PC${mesh.deviceCount() === 1 ? "" : "s"}</div>${runs.map((r) => `<button data-act="use-cluster" ${r.ready ? "" : "disabled"}>${tick(chatViaCluster())}<span>${esc(modelLabel(r.model))}</span><span class="sub">${r.ready ? `${r.ready} ready` : "starting…"}</span></button>`).join("")
-        || `<button data-view="models">${ic("network")}<span>Run a model on all PCs…</span></button>`}<div class="sep"></div>`;
-    }
-    items = `${cluster}<div class="lab">On this PC</div>${S.installed.map((x) => `<button data-act="load-model" data-file="${esc(x.file)}">${tick(!chatViaCluster() && S.server.model === x.file)}<span>${esc(modelLabel(x.file))}</span>${x.vision ? `<span class="badge good" style="margin-left:6px">Vision</span>` : ""}<span class="sub">${gb(x.sizeMb)}</span></button>`).join("") || `<div class="lab">None downloaded yet</div>`}
-      <div class="sep"></div><button data-view="models">${ic("download")}Get more models…</button>${S.server.running ? `<button data-act="unload">${ic("stop")}Unload the model on this PC</button>` : ""}`;
-  } else if (m.kind === "options") {
-    const t = S.settings.temperature;
-    items = `<div class="lab">Style</div>
-      <button data-act="set-temp" data-v="0.3">${tick(t <= 0.4)}<span>Precise</span><span class="sub">0.3</span></button>
-      <button data-act="set-temp" data-v="0.7">${tick(t > 0.4 && t < 0.9)}<span>Balanced</span><span class="sub">0.7</span></button>
-      <button data-act="set-temp" data-v="1.1">${tick(t >= 0.9)}<span>Creative</span><span class="sub">1.1</span></button>
-      <div class="sep"></div><button data-act="open-settings-general">${ic("pencil")}Edit system prompt…</button><button data-act="copy-chat">${ic("copy")}Copy chat as Markdown</button>`;
+    const clusterItem = mesh.deviceCount() > 1 ? `<button data-act="chat-cluster">${S.useCluster ? ic("check") : `<span style="width:16px"></span>`}<span>Use the whole cluster</span><span class="sub">${mesh.deviceCount()} PCs</span></button><div class="sep"></div>` : "";
+    items = `${clusterItem}<div class="lab">Models on this PC</div>${S.installed.map((x) => `<button data-act="load-model" data-file="${esc(x.file)}">${S.server.model === x.file ? ic("check") : `<span style="width:16px"></span>`}<span>${esc(modelLabel(x.file))}</span>${x.vision ? `<span class="badge good" style="margin-left:6px">Vision</span>` : ""}<span class="sub">${gb(x.sizeMb)}</span></button>`).join("") || `<div class="lab">None downloaded yet</div>`}
+      <div class="sep"></div><button data-view="models">${ic("download")}Download more models…</button>${S.server.running ? `<button data-act="unload">${ic("stop")}Unload model</button>` : ""}`;
   } else {
-    const rows: string[] = [];
-    if (S.engineBusy) rows.push(`<div class="task"><span class="spin"></span><span class="n" data-engine-msg>${esc(S.engineMsg)}</span></div>`);
-    if (S.loading) rows.push(`<div class="task"><span class="spin"></span><span class="n">Loading model…</span></div>`);
-    for (const [id, d] of S.downloads) if (!d.error) rows.push(`<div class="task"><span class="spin"></span><span class="n" title="${esc(d.name)}">${esc(short(d.name, 26))}</span><span class="v" data-dl="${esc(id)}"></span><button class="ibtn" data-act="dl-cancel" data-id="${esc(id)}" title="Cancel">${ic("x")}</button></div>`);
-    items = `<div class="lab">Background tasks</div>${rows.join("") || `<div class="lab">Nothing running.</div>`}`;
+    items = `<button data-act="attach-image" ${S.server.vision ? "" : "disabled"}>${ic("image")}Attach image${S.server.vision ? "" : `<span class="sub">needs a vision model</span>`}</button><button data-act="open-settings-general">${ic("sliders")}Edit system prompt…</button><button data-view="models">${ic("box")}Browse models…</button><button data-view="cluster">${ic("network")}Cluster…</button>`;
   }
   return `<div class="menu" style="${pos}">${items}</div>`;
 }
@@ -1047,32 +828,23 @@ function ensureOverlay(): HTMLElement {
   if (!o) { o = document.createElement("div"); o.id = "overlay"; document.body.appendChild(o); }
   return o;
 }
-function renderOverlay() {
-  const logOpen = (document.querySelector("#log-details") as HTMLDetailsElement | null)?.open ?? false;
-  ensureOverlay().innerHTML = menuHtml() + modalHtml();
-  if (logOpen) { const d = document.querySelector<HTMLDetailsElement>("#log-details"); if (d) d.open = true; }
-}
+function renderOverlay() { ensureOverlay().innerHTML = menuHtml() + modalHtml(); }
 
 function render() {
   const keep = document.querySelector<HTMLTextAreaElement>("#input")?.value ?? "";
   const hadFocus = document.activeElement?.id === "input";
-  const searchFocus = document.activeElement?.id === "search-input" ? (document.activeElement as HTMLInputElement).selectionStart : null;
-  const main = S.view === "chat" ? chatView() : S.view === "models" ? modelsView() : S.view === "integrations" ? integrationsView() : S.view === "api" ? mesh.meshView("api") : clusterView();
-  const chatRight = S.right;
-  $("#app").innerHTML = `<div class="app ${S.side ? "" : "no-side"} ${chatRight ? "" : "no-right"}">${sidebarHtml()}<section class="main">${headerHtml()}<div id="banners">${mesh.bannersHtml()}</div>${main}</section>${rightHtml()}</div>`;
+  const logOpen = (document.querySelector("#log-details") as HTMLDetailsElement | null)?.open ?? false;
+  const main = S.view === "chat" ? chatView() : S.view === "models" ? modelsView() : clusterView();
+  $("#app").innerHTML = `<div class="app ${S.side ? "" : "no-side"} ${S.right ? "" : "no-right"}">${sidebarHtml()}<section class="main">${headerHtml()}${main}</section>${rightHtml()}</div>`;
+  if (logOpen) (document.querySelector("#log-details") as HTMLDetailsElement).open = true;
   if (S.view === "chat") {
     const input = document.querySelector<HTMLTextAreaElement>("#input");
-    if (input) { input.value = keep; if (hadFocus || (!S.modal && searchFocus === null && !S.renamingId)) input.focus(); }
+    if (input) { input.value = keep; if (hadFocus || !S.modal) input.focus(); }
     const sc = document.querySelector<HTMLElement>("#scroll");
     if (sc) sc.scrollTop = sc.scrollHeight;
   }
   if (S.renamingId) { const r = document.querySelector<HTMLInputElement>("#rename-input"); r?.focus(); r?.select(); }
-  else if (searchFocus !== null || S.searchOpen) {
-    const el = document.querySelector<HTMLInputElement>("#search-input");
-    el?.focus();
-    if (el && searchFocus !== null) el.setSelectionRange(searchFocus, searchFocus);
-    S.searchOpen = false;
-  }
+  if (S.searchOpen && !S.renamingId) document.querySelector<HTMLInputElement>("#search-input")?.focus();
   renderOverlay();
 }
 
@@ -1088,8 +860,6 @@ function setView(v: View) {
   S.view = v; S.menu = null; S.renamingId = "";
   render();
   if (v === "cluster") { void checkWorkers(); schedulePreview(); void mesh.refreshMesh().then(() => { mesh.schedulePlan(); mesh.paint(true); }); }
-  if (v === "api") void mesh.refreshMesh().then(() => mesh.paint(true));
-  if (v === "integrations") void refreshTelegram();
 }
 
 document.addEventListener("click", (ev) => {
@@ -1121,57 +891,15 @@ document.addEventListener("click", (ev) => {
     case "regen": regenerate(); break;
     case "copy-msg": { const m = chat?.messages[Number(d.i)]; if (m) void navigator.clipboard?.writeText(m.content).then(() => toast("Copied")); break; }
     case "copy-code": { const code = t.closest(".codeblock")?.querySelector("code")?.textContent ?? ""; void navigator.clipboard?.writeText(code).then(() => toast("Code copied")); break; }
-    case "rename-chat": S.renamingId = S.activeId; S.menu = null; S.right = true; render(); break;
+    case "rename-chat": S.renamingId = S.activeId; S.menu = null; S.side = true; render(); break;
     case "copy-chat": if (chat) void navigator.clipboard?.writeText(chatMarkdown(chat)).then(() => toast("Chat copied as Markdown")); break;
     case "del-chat": if (chat) deleteChat(chat.id); S.menu = null; break;
     case "install-engine": void installEngine(); break;
     case "chat-cluster": S.useCluster = !S.useCluster; S.menu = null; render(); toast(S.useCluster ? "Chats now go to the whole cluster" : "Chats use the model on this PC"); break;
-    case "use-cluster":
-      if (!mesh.clusterReady()) { toast("The model on your cluster is still starting."); break; }
-      S.useCluster = true; S.localChosen = false; S.menu = null; render(); toast("Chats now go to your cluster"); break;
-    case "use-local":
-      if (!S.server.running) break;
-      S.useCluster = false; S.localChosen = true; S.menu = null; render(); toast("Chats use the model on this PC"); break;
-    case "quick-start": if (d.id) void quickStart(d.id); break;
-    case "cluster-run": { const c = S.catalog.find((x) => x.id === d.id); if (c) void runOnCluster(c.file, c.url); break; }
-    case "cluster-run-file": if (d.file) void runOnCluster(d.file, ""); break;
-    case "add-pc":
-      if (mesh.joined()) {
-        void invoke("mesh_pair_open").then(() => mesh.refreshMesh()).then(() => { paintChrome(); toast("Ready for a new PC. Open LanLM on it, go to Devices and press Join."); }).catch((e) => toast(String(e)));
-      } else if (mesh.nearbyCount()) {
-        // A cluster nearby is inviting: this PC probably wants to join it, not start its own.
-        setView("cluster");
-        toast("A cluster nearby is inviting PCs. Press Join to add this PC to it.");
-      } else {
-        // The first PC: make a cluster of one, then invite.
-        void invoke("mesh_create", { name: "Home cluster" }).then(() => invoke("mesh_pair_open")).then(() => mesh.refreshMesh())
-          .then(() => { setView("cluster"); toast("Cluster created. Now open LanLM on the other PC, go to Devices and press Join."); }).catch((e) => toast(String(e)));
-      }
-      break;
-    case "set-temp": S.settings.temperature = Number(d.v); saveSettings(); S.menu = null; renderOverlay(); toast(`Style set (temperature ${d.v})`); break;
-    case "tg-start": {
-      const token = (document.querySelector<HTMLInputElement>("#tg-token")?.value ?? "").trim();
-      S.tgToken = token;
-      S.tgAllow = document.querySelector<HTMLInputElement>("#tg-allow")?.value ?? S.tgAllow;
-      if (!token) { S.tgErr = "Paste the bot token from BotFather first."; paintIntegrations(); break; }
-      void tgRun(() => invoke("telegram_start", { token, allowed: parseIds(S.tgAllow), system: S.settings.system }));
-      break;
-    }
-    case "tg-stop": void tgRun(() => invoke("telegram_stop")); break;
-    case "tg-approve": case "tg-remove": {
-      const id = Number(d.id), cur = S.tg?.settings.allowed ?? [];
-      const allowed = d.act === "tg-approve" ? [...new Set([...cur, id])] : cur.filter((x) => x !== id);
-      S.tgAllow = allowed.join(", ");
-      void tgRun(() => invoke("telegram_update", { allowed, system: S.settings.system }));
-      break;
-    }
     case "load-model": if (d.file) void loadModel(d.file); break;
     case "unload": void unloadModel(); S.menu = null; break;
     case "dl": { const c = S.catalog.find((x) => x.id === d.id); if (c) void downloadModel(c.id, c.name, c.url, c.file, c.projUrl && c.projFile ? { url: c.projUrl, file: c.projFile } : null); break; }
-    case "attach-image":
-      S.menu = null; renderOverlay();
-      if (!S.server.vision || chatViaCluster()) { toast("Load a vision model (marked “Vision”) on this PC to attach images."); break; }
-      document.querySelector<HTMLInputElement>("#file-input")?.click(); break;
+    case "attach-image": S.menu = null; renderOverlay(); document.querySelector<HTMLInputElement>("#file-input")?.click(); break;
     case "rm-attach": S.attach.splice(Number(d.i), 1); render(); break;
     case "dl-cancel": void invoke("model_cancel", { id: d.id }); break;
     case "model-delete": void invoke("model_delete", { file: d.file }).then(refreshInstalled).then(render).catch((e) => toast(String(e))); break;
@@ -1243,13 +971,13 @@ document.addEventListener("keydown", (ev) => {
   if (t.id === "input" && ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); void send(); return; }
   if (t.id === "c-endpoint" && ev.key === "Enter") { ev.preventDefault(); addWorker(); return; }
   if (ev.key === "Escape") {
-    if (S.modal) { S.modal = null; renderOverlay(); } else if (S.menu) { S.menu = null; renderOverlay(); } else if (S.query) { S.query = ""; render(); }
+    if (S.modal) { S.modal = null; renderOverlay(); } else if (S.menu) { S.menu = null; renderOverlay(); } else if (S.searchOpen) { S.searchOpen = false; S.query = ""; render(); }
     return;
   }
   if (!ev.ctrlKey || ev.altKey) return;
   const k = ev.key.toLowerCase();
   if (k === "n") { ev.preventDefault(); newChat(); }
-  else if (k === "k") { ev.preventDefault(); S.searchOpen = true; S.right = true; render(); }
+  else if (k === "k") { ev.preventDefault(); S.searchOpen = true; S.side = true; render(); }
   else if (k === "b") { ev.preventDefault(); S.side = !S.side; savePrefs(); render(); }
   else if (k === ".") { ev.preventDefault(); S.right = !S.right; savePrefs(); render(); }
   else if (k === ",") { ev.preventDefault(); S.modal = "general"; renderOverlay(); }
@@ -1267,9 +995,7 @@ document.addEventListener("input", (ev) => {
   switch (t.id) {
     case "c-endpoint": { const wrap = document.querySelector<HTMLElement>("#c-ram-wrap"); if (wrap) wrap.style.visibility = t.value.includes("@") ? "hidden" : ""; return; }
     case "input": t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 190) + "px"; return;
-    case "search-input": S.query = t.value; render(); return;
-    case "tg-token": S.tgToken = t.value; return;
-    case "tg-allow": S.tgAllow = t.value; return;
+    case "search-input": S.query = t.value; { const pos = t.selectionStart; render(); const el = document.querySelector<HTMLInputElement>("#search-input"); el?.setSelectionRange(pos, pos); } return;
     case "s-ctx": s.ctx = Math.max(512, Math.round(Number(t.value)) || s.ctx); break;
     case "s-threads": s.threads = Math.max(1, Math.round(Number(t.value)) || s.threads); break;
     case "s-parallel": s.parallel = Math.max(1, Math.round(Number(t.value)) || s.parallel); break;

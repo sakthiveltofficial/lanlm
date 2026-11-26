@@ -11,7 +11,7 @@ import {
   type GatewaySettings, type MeshStatus, type NodeView, type PlanResult, type Planned,
 } from "./lib/mesh";
 
-type Tab = "devices" | "models" | "run" | "advanced";
+type Tab = "devices" | "models" | "run" | "gateway" | "advanced";
 type CatalogEntry = { id: string; name: string; file: string; url: string; sizeMb: number; desc: string; vision: boolean };
 
 /** What the screen needs from the rest of the app. Set once at start-up. */
@@ -26,10 +26,6 @@ export const hooks = {
   installEngine: (_variant: string) => {},
   engineBusy: (): boolean => false,
   isActive: (): boolean => false,
-  /** The API settings for a PC that is not in a cluster (shown on the Shared API page). */
-  localApiHtml: (): string => "",
-  /** Called once each time this PC joins a cluster. */
-  onJoined: () => {},
 };
 
 export const M = {
@@ -51,10 +47,6 @@ export const M = {
   addModel: { item: "", node: "", url: "" },
   logs: [] as string[],
   engineVariant: "auto",
-  /** Which page the redrawn root belongs to. */
-  page: "cluster" as "cluster" | "api",
-  advOpen: false,
-  wasJoined: null as boolean | null,
 };
 
 const COLORS = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)"];
@@ -70,8 +62,6 @@ export async function refreshMesh(): Promise<boolean> {
     const changed = j !== M.json;
     M.json = j;
     M.st = st;
-    if (M.wasJoined === false && st.mesh.joined) hooks.onJoined();
-    M.wasJoined = st.mesh.joined;
     if (!M.gw) M.gw = { ...st.gatewaySettings };
     if (!M.run.model) M.run.model = modelMatrix(st.mesh.nodes).find((r) => r.anyone)?.file ?? "";
     if (!M.addModel.node) M.addModel.node = st.mesh.me;
@@ -132,16 +122,6 @@ async function run<T>(key: string, f: () => Promise<T>, done?: (v: T) => void): 
   M.busy.delete(key);
   await refreshMesh();
   paint(true);
-  onChange();
-}
-
-let onChange: () => void = () => {};
-
-/** Starts a model on the cluster with sensible defaults. A missing file is fetched first (from a neighbour, or `url`). */
-export async function runOnCluster(file: string, url: string, ctx: number): Promise<void> {
-  await invoke("mesh_deploy", { deployment: { id: "", model: file, mode: "auto", ctx, parallel: 2, nodes: [], maxInstances: 0, url, sha256: "" } });
-  await refreshMesh();
-  onChange();
 }
 
 const busy = (k: string) => M.busy.has(k);
@@ -177,10 +157,10 @@ function joinPanel(st: MeshStatus): string {
   else if (ps.state === "failed") pair = `<p class="error">${esc(ps.error)}</p>`;
   const nearby = m.nearby.length
     ? m.nearby.map((n) => `<div class="item"><span class="avatar">${ic("cpu")}</span><div class="body"><div class="nm">${esc(n.name)}</div><div class="ds">is open to new PCs · ${esc(n.addrs[0] ?? "")}</div></div>
-        <button class="btn sm" data-act="mesh-join-nearby" data-addr="${esc(n.addrs[0] ?? "")}" ${n.addrs.length ? "" : "disabled"}>Join</button></div>`).join("")
-    : `<div class="item"><div class="ds">No cluster is inviting new PCs right now. On a PC that is already in the cluster press <b>Add a PC</b> (bottom left). Still nothing after that? Allow TCP port 50500 and UDP port 5353 for private networks in the Windows firewall, or join by address below.</div></div>`;
+        <button class="btn sm" data-act="mesh-join-nearby" data-addr="${esc(n.addrs[0] ?? "")}" ${n.addrs.length ? "" : "disabled"}>Ask to join</button></div>`).join("")
+    : `<div class="item"><div class="ds">No PCs open to new members were found on this network. On the other PC choose <b>Cluster → Invite a PC</b>.</div></div>`;
   return `<div class="card primary"><div class="ch"><span>${ic("link")} Join a cluster</span></div><div class="cb">
-      <p class="hint" style="margin:0 0 10px">On a PC that is already in the cluster, press <b>Add a PC</b>. The cluster shows up here within a few seconds.</p>
+      <p class="hint" style="margin:0 0 10px">On a PC that is already in the cluster, press <b>Invite a PC</b>. It will show up here.</p>
       <div class="list" style="margin-bottom:12px">${nearby}</div>${pair}
       <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Other ways to join</summary>
         <div class="row-inline" style="margin-top:10px"><input type="text" id="m-addr" placeholder="Address of a PC, like 192.168.1.20" value="${esc(M.addr)}" style="flex:1;min-width:170px" autocomplete="off">
@@ -191,13 +171,13 @@ function joinPanel(st: MeshStatus): string {
 }
 
 function startScreen(st: MeshStatus): string {
-  return `<div><h2>Devices</h2><p class="lead">Join your PCs into one AI cluster. They find each other on the network, share what they have, and run models together: each PC can serve a whole model, or share the pieces of a model too big for one. Everything between PCs is encrypted, and a PC only joins when you say yes.</p></div>
+  return `<div><h2>Cluster</h2><p class="lead">Join your PCs into one AI cluster. They find each other on the network, share what they have, and run models together: each PC can serve a whole model, or share the pieces of a model too big for one. Everything between PCs is encrypted, and a PC only joins when you say yes.</p></div>
     <div class="two">
-      ${joinPanel(st)}
-      <div class="card"><div class="ch"><span>${ic("plus")} First PC? Start a cluster</span></div><div class="cb">
-        <p class="hint" style="margin:0 0 10px">Do this on one PC only. Then press <b>Add a PC</b> and join from the others.</p>
+      <div class="card"><div class="ch"><span>${ic("plus")} Start a cluster</span></div><div class="cb">
+        <p class="hint" style="margin:0 0 10px">Do this on the first PC. Then invite the others.</p>
         <div class="row-inline"><input type="text" id="m-create-name" value="${esc(M.createName)}" maxlength="40" style="flex:1" autocomplete="off">
           <button class="btn" data-act="mesh-create" ${dis("create")}>Create</button></div></div></div>
+      ${joinPanel(st)}
     </div>
     <p class="error">${esc(M.err)}</p>`;
 }
@@ -206,9 +186,12 @@ function startScreen(st: MeshStatus): string {
 
 function header(st: MeshStatus): string {
   const m = st.mesh;
+  const reqs = m.pairRequests.map((r) => `<div class="item" style="background:var(--warn-soft)"><span class="avatar">${ic("cpu")}</span>
+      <div class="body"><div class="nm">${esc(r.name || "A PC")} wants to join</div><div class="ds">Only allow it if it shows this code: <span class="codeinline">${esc(formatCode(r.sas))}</span></div></div>
+      <button class="btn sm" data-act="mesh-allow" data-id="${r.id}">Allow</button><button class="btn light sm" data-act="mesh-deny" data-id="${r.id}">Don't allow</button></div>`).join("");
   const invite = m.pairingOpen
-    ? `<div class="hint">Open for two minutes. On the new PC open <b>Devices</b> and press <b>Join</b>.</div><button class="btn light sm" data-act="mesh-invite-stop" style="margin-top:6px">Close</button>`
-    : `<button class="btn" data-act="mesh-invite">${ic("plus")}Add a PC</button>`;
+    ? `<div class="hint">Open for two minutes. On the new PC choose <b>Cluster</b> and press <b>Ask to join</b>.</div><button class="btn light sm" data-act="mesh-invite-stop" style="margin-top:6px">Close</button>`
+    : `<button class="btn" data-act="mesh-invite">${ic("plus")}Invite a PC</button>`;
   const key = M.showKey
     ? `<code style="word-break:break-all">${esc(M.key)}</code><div class="row-inline" style="margin-top:6px"><button class="btn light sm" data-act="mesh-key-copy">${ic("copy")}Copy</button><button class="btn light sm" data-act="mesh-key-toggle">Hide</button></div>`
     : `<button class="btn light sm" data-act="mesh-key-toggle">Show cluster key</button>`;
@@ -221,7 +204,7 @@ function header(st: MeshStatus): string {
         <div class="hint" style="margin:12px 0 6px">Cluster key — gives full access, share it only with PCs you trust</div>${key}</div>
       <div><div class="hint" style="margin-bottom:6px">Add a PC</div>${invite}
         <div class="row-inline" style="margin-top:12px"><input type="text" id="m-addr" placeholder="Or connect by address, like 192.168.1.20" value="${esc(M.addr)}" style="flex:1;min-width:150px" autocomplete="off"><button class="btn light sm" data-act="mesh-add-peer">Connect</button></div></div>
-    </div></div></div>`;
+    </div>${reqs ? `<div class="list" style="margin-top:14px">${reqs}</div>` : ""}</div></div>`;
 }
 
 function summary(st: MeshStatus): string {
@@ -327,12 +310,12 @@ function runTab(st: MeshStatus): string {
         <button class="btn danger sm" data-act="mesh-stop" data-id="${esc(d.id)}" ${dis("stop" + d.id)}>Stop</button></div></div>`;
   }).join("");
   return `<div class="card primary"><div class="ch"><span>${ic("bolt")} Run a model on the cluster</span></div><div class="cb">
-      ${rows.length ? `<label class="fld">Model<select id="m-run-model">${opts}</select></label>
-        <details class="adv" ${M.advOpen ? "open" : ""}><summary data-act="mesh-adv">Advanced options</summary><div class="two" style="gap:14px;margin-top:12px">
+      ${rows.length ? `<div class="two" style="gap:14px">
+        <label class="fld">Model<select id="m-run-model">${opts}</select></label>
         <label class="fld">How<select id="m-run-mode">${modes.map(([v, t]) => `<option value="${v}" ${M.run.mode === v ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
         <label class="fld">Context per copy (tokens)<input type="number" id="m-run-ctx" value="${M.run.ctx}" min="512" step="512"></label>
         <label class="fld">Requests at once, per copy<input type="number" id="m-run-par" value="${M.run.parallel}" min="1" max="64"></label>
-        <label class="fld">Most copies (0 = as many as fit)<input type="number" id="m-run-max" value="${M.run.max}" min="0" max="64"></label></div></details>
+        <label class="fld">Most copies (0 = as many as fit)<input type="number" id="m-run-max" value="${M.run.max}" min="0" max="64"></label></div>
         <div style="margin-top:16px">${planBlock(st)}</div>
         <div class="row-inline" style="margin-top:14px;justify-content:flex-end"><button class="btn" data-act="mesh-deploy" ${M.plan?.instances.length ? "" : "disabled"} ${dis("deploy")}>Start</button></div>`
         : `<p class="hint">Add a model on the <b>Models</b> tab first.</p>`}
@@ -375,73 +358,18 @@ function advancedTab(st: MeshStatus): string {
 
 function inner(): string {
   const st = M.st;
-  if (!st) return `<div><h2>${M.page === "api" ? "Shared API" : "Devices"}</h2><p class="hint"><span class="spin"></span> Starting…</p></div>`;
-  if (M.page === "api" && !st.mesh.joined) return apiInner(st);
+  if (!st) return `<div><h2>Cluster</h2><p class="hint"><span class="spin"></span> Starting…</p></div>`;
   if (!st.mesh.joined) return startScreen(st);
-  if (M.page === "api") return apiInner(st);
-  const tabs: [Tab, string][] = [["devices", "PCs"], ["models", "Models"], ["run", "Run a model"], ["advanced", "More"]];
-  const body = M.tab === "devices" ? devicesTab(st) : M.tab === "models" ? modelsTab(st) : M.tab === "run" ? runTab(st) : advancedTab(st);
-  return `<div><h2>Devices</h2><p class="lead">Every PC in your cluster, what it holds and what it runs.</p></div>${header(st)}${summary(st)}
+  const tabs: [Tab, string][] = [["devices", "PCs"], ["models", "Models"], ["run", "Run"], ["gateway", "Shared API"], ["advanced", "More"]];
+  const body = M.tab === "devices" ? devicesTab(st) : M.tab === "models" ? modelsTab(st) : M.tab === "run" ? runTab(st) : M.tab === "gateway" ? gatewayTab(st) : advancedTab(st);
+  return `<div><h2>Cluster</h2></div>${header(st)}${summary(st)}
     <div class="mtabs">${tabs.map(([t, l]) => `<button class="${M.tab === t ? "on" : ""}" data-act="mesh-tab" data-tab="${t}">${l}</button>`).join("")}</div>
-    ${M.tab !== "run" && M.err ? `<p class="error">${esc(M.err)}</p>` : ""}${body}`;
-}
-
-/** The Shared API page: the cluster's address when in a cluster, this PC's API otherwise. */
-function apiInner(st: MeshStatus): string {
-  const head = `<div><h2>Shared API</h2><p class="lead">One OpenAI-compatible address that apps, scripts and coding tools can use. ${st.mesh.joined ? "Requests are spread over every PC in your cluster." : "Right now it serves the model loaded on this PC. Join or create a cluster on the Devices page to share all your PCs through one address."}</p></div>`;
-  return head + (st.mesh.joined ? gatewayTab(st) : hooks.localApiHtml());
+    ${M.tab !== "run" && M.tab !== "gateway" && M.err ? `<p class="error">${esc(M.err)}</p>` : ""}${body}`;
 }
 
 /** The page: a scrolling shell whose inside is redrawn on its own as the cluster changes. */
-export function meshView(page: "cluster" | "api" = "cluster"): string {
-  M.page = page;
+export function meshView(): string {
   return `<div class="scroll"><div class="col wide page mesh" id="mesh-root">${inner()}</div></div>`;
-}
-
-// ───────────────────────────── shared with the rest of the app ─────────────────────────────
-
-/** Is this PC in a cluster? */
-export const joined = (): boolean => !!M.st?.mesh.joined;
-
-/** Models running on the cluster, each with how many copies are ready. */
-export function runningModels(): { id: string; model: string; ready: number; total: number; message: string }[] {
-  const st = M.st;
-  if (!st?.mesh.joined) return [];
-  const insts = allInstances(st.mesh.nodes.filter((n) => n.alive));
-  return st.deployments.map((d) => {
-    const mine = insts.filter((x) => x.inst.deployment === d.id);
-    return { id: d.id, model: d.model, ready: mine.filter((x) => x.inst.state === "ready").length, total: mine.length, message: st.deployStatus[d.id]?.message ?? "" };
-  });
-}
-
-/** Clusters on this network that are inviting new PCs. */
-export const nearbyCount = (): number => M.st?.mesh.nearby.length ?? 0;
-
-/** How many PCs are asking to join right now. */
-export const pairRequestCount = (): number => M.st?.mesh.pairRequests.length ?? 0;
-
-/**
- * Banners shown above every page: a PC asking to join (so the request is never missed), the code
- * to compare while this PC asks to join, and an open invitation.
- */
-export function bannersHtml(): string {
-  const st = M.st;
-  if (!st) return "";
-  const m = st.mesh, out: string[] = [];
-  for (const r of m.pairRequests) {
-    out.push(`<div class="banner warn"><span class="bi">${ic("network")}</span><div class="bt"><b>${esc(r.name || "A PC")} wants to join your cluster</b><span>Allow it only if it shows this code: <span class="codeinline">${esc(formatCode(r.sas))}</span></span></div>
-      <button class="btn sm" data-act="mesh-allow" data-id="${r.id}">Allow</button><button class="btn light sm" data-act="mesh-deny" data-id="${r.id}">Don't allow</button></div>`);
-  }
-  const ps = m.pairStatus;
-  if (ps.state === "waiting") {
-    out.push(`<div class="banner"><span class="bi">${ic("link")}</span><div class="bt"><b>Asking to join… check the code</b><span>The other PC must show <span class="codeinline">${esc(formatCode(ps.sas))}</span>. Press Allow there.</span></div><button class="btn light sm" data-act="mesh-pair-reset">Cancel</button></div>`);
-  } else if (ps.state === "connecting") {
-    out.push(`<div class="banner"><span class="bi"><span class="spin"></span></span><div class="bt"><b>Contacting the other PC…</b></div></div>`);
-  }
-  if (m.joined && m.pairingOpen && !m.pairRequests.length) {
-    out.push(`<div class="banner"><span class="bi">${ic("plus")}</span><div class="bt"><b>Ready for a new PC</b><span>On the other PC, open LanLM, go to <b>Devices</b> and press <b>Join</b> next to this cluster. Open for two minutes.</span></div><button class="btn light sm" data-act="mesh-invite-stop">Close</button></div>`);
-  }
-  return out.join("");
 }
 
 // ───────────────────────────── actions ─────────────────────────────
@@ -501,7 +429,6 @@ export function meshAct(act: string, d: DOMStringMap): boolean {
       const r = M.run;
       void run("deploy", () => invoke("mesh_deploy", { deployment: { id: "", model: r.model, mode: r.mode, ctx: r.ctx, parallel: r.parallel, nodes: [], maxInstances: r.max, url: "", sha256: "" } }), () => hooks.toast("Starting…")); return true;
     }
-    case "mesh-adv": M.advOpen = !M.advOpen; paint(true); return true;
     case "mesh-stop": void run("stop" + d.id, () => invoke("mesh_undeploy", { id: d.id })); return true;
     case "mesh-chat": hooks.useInChat(!hooks.chatUsesCluster()); paint(true); return true;
     case "mesh-gw-save": {
@@ -551,13 +478,11 @@ export function meshInput(t: HTMLInputElement | HTMLSelectElement, kind: "input"
 
 let timer: number | undefined;
 /** Keeps the cluster page fresh while it is on screen, and the sidebar badge otherwise. */
-export function startPolling(changedCb: () => void) {
-  onChange = changedCb;
+export function startPolling(onBadge: () => void) {
   window.clearInterval(timer);
   timer = window.setInterval(async () => {
     const changed = await refreshMesh();
     if (!changed) return;
-    if (hooks.isActive()) paint();
-    changedCb();
+    if (hooks.isActive()) paint(); else onBadge();
   }, 1500);
 }
